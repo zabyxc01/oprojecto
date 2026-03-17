@@ -1,0 +1,14 @@
+# Godot
+.godot/
+*.import
+export_presets.cfg
+
+# Assets (large binaries — tracked separately)
+assets/models/*.vrm
+assets/models/*.glb
+assets/animations/*.vrma
+assets/animations/*.bvh
+
+# OS
+.DS_Store
+Thumbs.db
