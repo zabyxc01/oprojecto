@@ -45,7 +45,8 @@ func _ready() -> void:
 
 func _set_state(state: PipelineState) -> void:
 	current_state = state
-	var state_name := PipelineState.keys()[state].to_lower()
+	var keys = PipelineState.keys()
+	var state_name = str(keys[state]).to_lower()
 	on_state_changed.emit(state_name)
 	print("[pipeline] ", state_name)
 
