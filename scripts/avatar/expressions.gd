@@ -1,9 +1,8 @@
 extends Node
 class_name AvatarExpressions
 
-# Drives VRM expression blend shapes from emotion tags.
-# Uses the same mesh as lip sync but targets expression blend shapes
-# (happy, angry, sad, surprised, relaxed, neutral).
+signal emotion_changed(emotion: String)
+signal emotion_faded()
 
 var _mesh: MeshInstance3D = null
 var _expression_indices := {}  # emotion name → blend shape index
@@ -62,16 +61,26 @@ func setup(model: Node3D) -> void:
 
 	print("[expressions] Ready: ", _expression_indices.keys())
 
+const FACE_FALLBACK := {
+	"blush": "happy",
+	"sleepy": "relaxed",
+	"thinking": "neutral",
+}
+
 func set_emotion(emotion: String) -> void:
 	if emotion == _current_emotion:
 		return
-	# Only set if we have the blend shape
-	if emotion in _expression_indices or emotion == "neutral":
-		# Fade out current expression
-		_current_emotion = emotion
-		_target_weight = 1.0 if emotion != "neutral" else 0.0
-		_hold_timer = 0.0
-		print("[expressions] → ", emotion)
+	_current_emotion = emotion
+	_hold_timer = 0.0
+	emotion_changed.emit(emotion)
+	var face_emotion = FACE_FALLBACK.get(emotion, emotion)
+	if face_emotion in _expression_indices:
+		_target_weight = 1.0
+	elif face_emotion == "neutral" or emotion == "neutral":
+		_target_weight = 0.0
+	else:
+		_target_weight = 0.0
+	print("[expressions] → ", emotion, " (face: ", face_emotion, ")")
 
 func update(delta: float) -> void:
 	if not _mesh:
@@ -81,16 +90,18 @@ func update(delta: float) -> void:
 	_current_weight = lerp(_current_weight, _target_weight, delta * _transition_speed)
 
 	# Hold timer — return to neutral after hold_duration
-	if _current_emotion != "neutral" and _target_weight > 0.5:
+	if _current_emotion != "neutral":
 		_hold_timer += delta
 		if _hold_timer >= _hold_duration:
 			_target_weight = 0.0
 			_current_emotion = "neutral"
+			emotion_faded.emit()
 
 	# Apply expression blend shape
+	var face_target = FACE_FALLBACK.get(_current_emotion, _current_emotion)
 	for emotion in _expression_indices:
 		var idx = _expression_indices[emotion]
-		if emotion == _current_emotion:
+		if emotion == face_target:
 			_mesh.set_blend_shape_value(idx, _current_weight)
 		else:
 			# Fade out other expressions

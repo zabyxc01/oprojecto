@@ -38,7 +38,15 @@ var hub_client: HubClient
 # HTTP nodes (direct mode)
 var _llm_http: HTTPRequest
 var _tts_http: HTTPRequest
+var _stt_http: HTTPRequest
 var _audio_player: AudioStreamPlayer
+
+# Mic capture
+var _mic_record: AudioStreamPlayer
+var _capture_effect: AudioEffectCapture
+var _is_recording := false
+var MIC_SAMPLE_RATE: int
+const MIC_BUS_NAME := "MicCapture"
 
 func _ready() -> void:
 	_load_history()
@@ -51,9 +59,15 @@ func _ready() -> void:
 	_tts_http.timeout = 30.0
 	add_child(_tts_http)
 
+	_stt_http = HTTPRequest.new()
+	_stt_http.timeout = 60.0
+	add_child(_stt_http)
+
 	_audio_player = AudioStreamPlayer.new()
 	add_child(_audio_player)
 	_audio_player.finished.connect(_on_audio_finished)
+
+	_setup_mic()
 
 func _set_state(state: PipelineState) -> void:
 	current_state = state
@@ -188,18 +202,284 @@ func _load_history() -> void:
 		conversation_history.assign(data)
 		print("[pipeline] History loaded (", conversation_history.size(), " messages)")
 
-# ── PTT (placeholder — needs mic capture implementation) ──────────────────────
+# ── Mic Setup ─────────────────────────────────────────────────────────────────
+func _setup_mic() -> void:
+	var bus_idx := AudioServer.get_bus_index(MIC_BUS_NAME)
+	if bus_idx == -1:
+		AudioServer.add_bus()
+		bus_idx = AudioServer.bus_count - 1
+		AudioServer.set_bus_name(bus_idx, MIC_BUS_NAME)
+	AudioServer.set_bus_mute(bus_idx, true)
+
+	# Clear existing effects and add capture
+	while AudioServer.get_bus_effect_count(bus_idx) > 0:
+		AudioServer.remove_bus_effect(bus_idx, 0)
+	_capture_effect = AudioEffectCapture.new()
+	_capture_effect.buffer_length = 30.0  # 30 seconds max recording
+	AudioServer.add_bus_effect(bus_idx, _capture_effect)
+
+	MIC_SAMPLE_RATE = AudioServer.get_mix_rate()
+
+	_mic_record = AudioStreamPlayer.new()
+	var mic_stream := AudioStreamMicrophone.new()
+	_mic_record.stream = mic_stream
+	_mic_record.bus = MIC_BUS_NAME
+	add_child(_mic_record)
+	print("[pipeline] Mic setup on bus: ", MIC_BUS_NAME, " @ ", MIC_SAMPLE_RATE, " Hz")
+
+# ── PTT ───────────────────────────────────────────────────────────────────────
 func toggle_ptt() -> void:
 	match current_state:
 		PipelineState.IDLE:
-			_set_state(PipelineState.LISTENING)
-			# TODO: start mic recording
-			print("[pipeline] PTT: start listening (mic capture TODO)")
+			_start_recording()
 		PipelineState.LISTENING:
-			_set_state(PipelineState.PROCESSING)
-			# TODO: stop recording, send to STT, then process
-			print("[pipeline] PTT: stop listening (STT TODO)")
-			_set_state(PipelineState.IDLE)
+			_stop_recording()
+		_:
+			print("[pipeline] PTT ignored — busy (", PipelineState.keys()[current_state], ")")
+
+func _start_recording() -> void:
+	if not _capture_effect:
+		print("[pipeline] No mic capture available")
+		return
+	_capture_effect.clear_buffer()
+	_mic_record.play()
+	_is_recording = true
+	_set_state(PipelineState.LISTENING)
+	print("[pipeline] Recording started")
+
+func _stop_recording() -> void:
+	_is_recording = false
+	_mic_record.stop()
+	_set_state(PipelineState.PROCESSING)
+
+	var frames := _capture_effect.get_buffer(_capture_effect.get_frames_available())
+	_capture_effect.clear_buffer()
+
+	if frames.size() == 0:
+		print("[pipeline] No audio captured")
+		_set_state(PipelineState.IDLE)
+		return
+
+	var duration := float(frames.size()) / MIC_SAMPLE_RATE
+	print("[pipeline] Captured ", frames.size(), " frames (", "%.1f" % duration, "s)")
+
+	if duration < 0.5:
+		print("[pipeline] Too short (< 0.5s), ignoring")
+		_set_state(PipelineState.IDLE)
+		return
+
+	# Check audio level — reject near-silence
+	var peak := 0.0
+	for frame in frames:
+		var mono := absf((frame.x + frame.y) * 0.5)
+		if mono > peak:
+			peak = mono
+	print("[pipeline] Peak amplitude: ", "%.4f" % peak)
+	if peak < 0.01:
+		print("[pipeline] Audio too quiet, ignoring")
+		_set_state(PipelineState.IDLE)
+		return
+
+	var wav_data := _pack_wav(frames)
+	print("[pipeline] WAV packed: ", wav_data.size(), " bytes")
+
+	if hub_connected and hub_client:
+		print("[pipeline] Sending audio to hub for STT...")
+		hub_client.send_audio(wav_data, MIC_SAMPLE_RATE)
+		# Hub auto-chains: STT → chat → TTS (auto_chat: true)
+		# Response comes back via hub_client signals
+	else:
+		_transcribe_direct(wav_data)
+
+func _pack_wav(frames: PackedVector2Array) -> PackedByteArray:
+	# Convert stereo float frames to mono 16-bit PCM WAV
+	var samples := PackedByteArray()
+	for frame in frames:
+		var mono := (frame.x + frame.y) * 0.5
+		var s := clampi(int(mono * 32767.0), -32768, 32767)
+		samples.append(s & 0xFF)
+		samples.append((s >> 8) & 0xFF)
+
+	var data_size := samples.size()
+	var wav := PackedByteArray()
+	# RIFF header
+	wav.append_array("RIFF".to_ascii_buffer())
+	wav.append_array(_int32_le(36 + data_size))
+	wav.append_array("WAVE".to_ascii_buffer())
+	# fmt chunk
+	wav.append_array("fmt ".to_ascii_buffer())
+	wav.append_array(_int32_le(16))        # chunk size
+	wav.append_array(_int16_le(1))         # PCM
+	wav.append_array(_int16_le(1))         # mono
+	wav.append_array(_int32_le(MIC_SAMPLE_RATE))
+	wav.append_array(_int32_le(MIC_SAMPLE_RATE * 2))  # byte rate
+	wav.append_array(_int16_le(2))         # block align
+	wav.append_array(_int16_le(16))        # bits per sample
+	# data chunk
+	wav.append_array("data".to_ascii_buffer())
+	wav.append_array(_int32_le(data_size))
+	wav.append_array(samples)
+	return wav
+
+func _int32_le(v: int) -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(4)
+	b[0] = v & 0xFF
+	b[1] = (v >> 8) & 0xFF
+	b[2] = (v >> 16) & 0xFF
+	b[3] = (v >> 24) & 0xFF
+	return b
+
+func _int16_le(v: int) -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(2)
+	b[0] = v & 0xFF
+	b[1] = (v >> 8) & 0xFF
+	return b
+
+func _transcribe_direct(wav_data: PackedByteArray) -> void:
+	var boundary := "----GodotBoundary%d" % randi()
+	var body := PackedByteArray()
+	body.append_array(("--%s\r\n" % boundary).to_ascii_buffer())
+	body.append_array("Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n".to_ascii_buffer())
+	body.append_array("Content-Type: audio/wav\r\n\r\n".to_ascii_buffer())
+	body.append_array(wav_data)
+	body.append_array(("\r\n--%s\r\n" % boundary).to_ascii_buffer())
+	body.append_array("Content-Disposition: form-data; name=\"language\"\r\n\r\n".to_ascii_buffer())
+	body.append_array("en".to_ascii_buffer())
+	body.append_array(("\r\n--%s--\r\n" % boundary).to_ascii_buffer())
+
+	var headers := ["Content-Type: multipart/form-data; boundary=%s" % boundary]
+	var err := _stt_http.request_raw(stt_url + "/transcribe", headers, HTTPClient.METHOD_POST, body)
+	if err != OK:
+		print("[pipeline] STT request failed: ", err)
+		_set_state(PipelineState.IDLE)
+		return
+
+	var result = await _stt_http.request_completed
+	var response_code: int = result[1]
+	var response_body: PackedByteArray = result[3]
+
+	if response_code != 200:
+		print("[pipeline] STT error: ", response_code)
+		_set_state(PipelineState.IDLE)
+		return
+
+	var json = JSON.parse_string(response_body.get_string_from_utf8())
+	if not json or not json.has("text"):
+		print("[pipeline] STT: no text in response")
+		_set_state(PipelineState.IDLE)
+		return
+
+	var transcript: String = json["text"].strip_edges()
+	print("[pipeline] STT transcript: ", transcript)
+	if transcript.is_empty():
+		print("[pipeline] Empty transcript, ignoring")
+		_set_state(PipelineState.IDLE)
+		return
+
+	# Feed transcript as if user typed it
+	_set_state(PipelineState.IDLE)
+	on_response.emit("[You said]: " + transcript)
+	send_text(transcript)
+
+# ── Emotion Detection (direct mode) ──────────────────────────────────────────
+const _STAGE_DIRECTION_MAP := {
+	"smile": "happy", "smiling": "happy", "grin": "happy", "beam": "happy",
+	"laugh": "happy", "giggle": "happy", "chuckle": "happy",
+	"excited": "happy", "cheerful": "happy", "bright": "happy",
+	"wink": "happy", "playful": "happy",
+	"sad": "sad", "frown": "sad", "sigh": "sad", "tear": "sad",
+	"disappointed": "sad", "down": "sad", "melancholy": "sad",
+	"angry": "angry", "glare": "angry", "scowl": "angry", "furious": "angry",
+	"irritat": "angry", "annoyed": "angry",
+	"surprise": "surprised", "shock": "surprised", "gasp": "surprised",
+	"wide eye": "surprised", "stunned": "surprised",
+	"calm": "relaxed", "relax": "relaxed", "peaceful": "relaxed",
+	"gentle": "relaxed", "warm": "relaxed", "nod": "relaxed",
+	"blush": "blush", "fluster": "blush", "shy": "blush",
+	"embarrass": "blush", "cute": "blush",
+	"sleepy": "sleepy", "yawn": "sleepy", "tired": "sleepy",
+	"drowsy": "sleepy", "exhausted": "sleepy",
+	"think": "thinking", "ponder": "thinking", "hmm": "thinking",
+	"consider": "thinking", "wonder": "thinking", "puzzl": "thinking",
+	"confused": "thinking", "curious": "thinking", "tilt": "thinking",
+	"thoughtful": "thinking",
+}
+
+const _EMOTION_KEYWORDS := {
+	"happy": [
+		"haha", "lol", "glad", "awesome", "great", "love", "yay", "nice",
+		"wonderful", "fantastic", "excited", "fun", "enjoy", "happy", "laugh",
+		"hehe", "sweet", "cool", "amazing",
+	],
+	"angry": [
+		"angry", "furious", "mad", "annoyed", "frustrated", "ugh",
+		"hate", "pissed", "irritated", "damn", "hell",
+	],
+	"sad": [
+		"sad", "sorry", "unfortunately", "miss", "lonely", "cry",
+		"disappointing", "sigh", "heartbreaking",
+	],
+	"surprised": [
+		"wow", "whoa", "oh!", "really?", "seriously?", "no way",
+		"unexpected", "surprised", "shocking", "what?!",
+	],
+	"relaxed": [
+		"chill", "relax", "calm", "peaceful", "cozy", "comfy",
+		"easy", "mellow", "gentle", "soft", "quiet",
+	],
+	"blush": [
+		"blush", "embarrass", "shy", "fluster", "cute",
+	],
+	"sleepy": [
+		"sleepy", "tired", "yawn", "exhausted", "drowsy", "nap", "bed",
+	],
+	"thinking": [
+		"think", "wonder", "hmm", "ponder", "curious", "consider",
+		"puzzl", "confus", "interesting",
+	],
+}
+
+var _paren_regex: RegEx
+var _strip_paren_regex: RegEx
+
+func _init_emotion_regex() -> void:
+	_paren_regex = RegEx.new()
+	_paren_regex.compile("^\\(([^)]+)\\)")
+	_strip_paren_regex = RegEx.new()
+	_strip_paren_regex.compile("\\([^)]+\\)\\s*")
+
+func _detect_emotion(text: String) -> String:
+	if _paren_regex == null:
+		_init_emotion_regex()
+
+	var stripped := text.strip_edges()
+
+	var m := _paren_regex.search(stripped)
+	if m:
+		var direction := m.get_string(1).to_lower()
+		for keyword in _STAGE_DIRECTION_MAP:
+			if direction.contains(keyword):
+				return _STAGE_DIRECTION_MAP[keyword]
+
+	var text_lower := text.to_lower()
+	var best_emotion := "neutral"
+	var best_score := 0
+	for emotion in _EMOTION_KEYWORDS:
+		var score := 0
+		for kw in _EMOTION_KEYWORDS[emotion]:
+			if text_lower.contains(kw):
+				score += 1
+		if score > best_score:
+			best_score = score
+			best_emotion = emotion
+	return best_emotion
+
+func _strip_stage_directions(text: String) -> String:
+	if _strip_paren_regex == null:
+		_init_emotion_regex()
+	return _strip_paren_regex.sub(text, "", true).strip_edges()
 
 # ── Direct Mode (fallback) ───────────────────────────────────────────────────
 func _process_text_direct(user_text: String) -> void:
@@ -241,10 +521,18 @@ func _process_text_direct(user_text: String) -> void:
 	conversation_history.append({"role": "assistant", "content": response_text})
 	_save_history()
 
+	var emotion := _detect_emotion(response_text)
+	print("[pipeline] Detected emotion: ", emotion, " from: ", response_text.substr(0, 80))
+	if emotion != "neutral" and emotion != "":
+		on_emotion.emit(emotion)
+
 	on_response.emit(response_text)
 
-	# Send to TTS
-	_speak_direct(response_text)
+	var tts_text := _strip_stage_directions(response_text)
+	if tts_text != "":
+		_speak_direct(tts_text)
+	else:
+		_set_state(PipelineState.IDLE)
 
 func _speak_direct(text: String) -> void:
 	_set_state(PipelineState.SPEAKING)

@@ -27,6 +27,10 @@ window/transparent_bg=true
 
 enabled=PackedStringArray("res://addons/Godot-MToon-Shader/plugin.cfg", "res://addons/vrm/plugin.cfg")
 
+[audio]
+
+driver/enable_input=true
+
 [rendering]
 
 environment/defaults/default_clear_color=Color(0, 0, 0, 0)

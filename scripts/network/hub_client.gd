@@ -37,7 +37,7 @@ func connect_to_hub(url: String) -> void:
 	# Need a fresh peer for each connection attempt
 	_ws = WebSocketPeer.new()
 	_ws.inbound_buffer_size = 1048576   # 1MB — TTS audio can be large
-	_ws.outbound_buffer_size = 262144   # 256KB
+	_ws.outbound_buffer_size = 4194304   # 4MB — base64 audio can be large
 
 	print("[hub] connecting to ", ws_url)
 	var err = _ws.connect_to_url(ws_url)
@@ -61,7 +61,7 @@ func send_chat(text: String, history: Array) -> void:
 		},
 	})
 
-func send_audio(audio_data: PackedByteArray) -> void:
+func send_audio(audio_data: PackedByteArray, sample_rate: int = 44100) -> void:
 	if not _is_connected:
 		return
 	_send({
@@ -71,7 +71,7 @@ func send_audio(audio_data: PackedByteArray) -> void:
 		"payload": {
 			"audio_b64": Marshalls.raw_to_base64(audio_data),
 			"format": "wav",
-			"sample_rate": 16000,
+			"sample_rate": sample_rate,
 			"auto_chat": true,
 		},
 	})

@@ -289,7 +289,12 @@ func _ready() -> void:
 	row3.add_child(font_slider)
 	font_slider.value_changed.connect(func(v):
 		config.set_value("chat_font_size", int(v))
-		# Font applies to new messages only
+		for msg_container in chat_messages.get_children():
+			for bubble in msg_container.get_children():
+				for child in bubble.get_children():
+					if child is RichTextLabel:
+						child.add_theme_font_size_override("normal_font_size", int(v))
+		text_input.add_theme_font_size_override("font_size", int(v))
 	)
 
 	_toolbar.visible = false  # toggle with F3
@@ -322,6 +327,7 @@ func _ready() -> void:
 	voice_pipeline.hub_client = hub_client
 	hub_client.chat_response.connect(voice_pipeline.on_hub_chat_response)
 	hub_client.tts_audio.connect(voice_pipeline.on_hub_tts_audio)
+	hub_client.stt_result.connect(_on_stt_result)
 	connection_manager.mode_changed.connect(_on_connection_mode_changed)
 	connection_manager.setup(hub_client)
 
@@ -331,6 +337,8 @@ func _ready() -> void:
 	expressions = preload("res://scripts/avatar/expressions.gd").new()
 	add_child(expressions)
 	voice_pipeline.on_emotion.connect(func(e): expressions.set_emotion(e))
+	expressions.emotion_changed.connect(_on_emotion_changed)
+	expressions.emotion_faded.connect(_on_emotion_faded)
 
 	anim_system = preload("res://scripts/avatar/animation.gd").new()
 	add_child(anim_system)
@@ -427,8 +435,8 @@ func _on_model_loaded(model: Node3D) -> void:
 	if anim_system:
 		anim_system.setup(model)
 		# Play idle animation if available
-		if anim_system.has_animation("VRMA_01"):
-			anim_system.play("VRMA_01")
+		if anim_system.has_animation("LookAround"):
+			anim_system.play("LookAround")
 		print("[main] Available animations: ", anim_system.get_available())
 
 	# Refresh animation selector
@@ -545,19 +553,79 @@ func _on_connection_mode_changed(mode: String) -> void:
 func _on_voice_state_changed(state: String) -> void:
 	match state:
 		"listening":
-			add_chat_message("System", "Listening...")
+			if _sys_log:
+				_sys_log.text = "REC  Listening... (F2 to stop)"
+				_sys_log.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3, 1.0))
 		"processing":
-			add_chat_message("System", "Thinking...")
+			if _sys_log:
+				_sys_log.text = "Processing..."
+				_sys_log.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7, 0.9))
 		"generating_audio":
-			add_chat_message("System", "Generating voice...")
+			if _sys_log:
+				_sys_log.text = "Generating voice..."
+				_sys_log.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7, 0.9))
 		"speaking":
 			if awareness:
 				awareness.set_talking(true)
+			if _sys_log:
+				_sys_log.text = ""
 		"idle":
 			if awareness:
 				awareness.set_talking(false)
 			if _sys_log:
 				_sys_log.text = ""
+
+func _on_stt_result(text: String) -> void:
+	print("[main] STT result: '", text, "'")
+	if text.begins_with("[STT error"):
+		add_chat_message("System", text)
+		voice_pipeline._set_state(VoicePipeline.PipelineState.IDLE)
+		return
+	if text.is_empty():
+		add_chat_message("System", "No speech detected")
+		voice_pipeline._set_state(VoicePipeline.PipelineState.IDLE)
+		return
+	add_chat_message("You", text)
+	voice_pipeline.conversation_history.append({"role": "user", "content": text})
+	# Hub auto-chains STT → chat, so the response will come via chat_response signal
+
+const EMOTION_ANIM_MAP := {
+	"happy": "Clapping",
+	"angry": "Angry",
+	"sad": "Sad",
+	"surprised": "Surprised",
+	"relaxed": "Relax",
+	"blush": "Blush",
+	"sleepy": "Sleepy",
+	"thinking": "Thinking",
+	"neutral": "LookAround",
+}
+
+var _current_emotion_anim := ""
+
+func _on_emotion_changed(emotion: String) -> void:
+	if not anim_system:
+		return
+	var clip = EMOTION_ANIM_MAP.get(emotion, "")
+	if clip.is_empty() or not anim_system.has_animation(clip):
+		return
+	if clip == _current_emotion_anim:
+		return
+	_current_emotion_anim = clip
+	anim_system.play(clip)
+
+func _on_emotion_faded() -> void:
+	if not anim_system:
+		return
+	var idle = "LookAround"
+	if not anim_system.has_animation(idle):
+		var avail = anim_system.get_available()
+		if avail.size() > 0:
+			idle = avail[0]
+		else:
+			return
+	_current_emotion_anim = idle
+	anim_system.play(idle)
 
 func add_chat_message(sender: String, text: String) -> void:
 	# System messages — update the static log strip, don't add to chat
