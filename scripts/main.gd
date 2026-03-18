@@ -27,7 +27,10 @@ var _anim_selector: OptionButton = null
 var _tts_selector: OptionButton = null
 var _toolbar: PanelContainer = null
 var _loader_ref: Node = null
+var _model_mapper: Node = null
 var _x11_wid: int = 0
+var _is_dragging := false
+var _last_model_path := ""
 const MODELS_DIR := "/mnt/storage/staging/ai-models-animations/vrm-models/"
 
 func _ready() -> void:
@@ -143,26 +146,45 @@ func _ready() -> void:
 
 	_screen_context.context_changed.connect(_behavior.on_context_changed)
 	_behavior.wants_animation.connect(_on_behavior_animation)
-	_behavior.wants_to_speak.connect(_on_behavior_speak)
 
 	# ── Ambient LLM (rate-limited context queries) ────────────────────
 	_ambient_llm = preload("res://scripts/awareness/ambient_llm.gd").new()
 	add_child(_ambient_llm)
 	_ambient_llm.setup(voice_pipeline)
 	_screen_context.context_changed.connect(_ambient_llm.on_context_changed)
-	# Route behavior speak requests through ambient LLM for filtering
+	# Route behavior speak requests through ambient LLM (sole path)
 	_behavior.wants_to_speak.connect(func(prompt):
 		var ctx = _screen_context.get_current()
 		_ambient_llm.request_query(prompt, "observation", ctx)
+	)
+	# Sync behavior state to ambient LLM for filtering
+	_behavior.state_changed.connect(func(new_state: String, _old_state: String):
+		_ambient_llm.set_behavior_state(new_state)
+		print("[main] Behavior: ", _old_state, " -> ", new_state)
 	)
 
 	# ── Persistent state (mood, familiarity, facts) ───────────────────
 	_persistent_state = preload("res://scripts/awareness/persistent_state.gd").new()
 	add_child(_persistent_state)
+	# Record app usage when screen context changes
+	_screen_context.context_changed.connect(_persistent_state.record_context)
+	# Log behavior transitions (attentive = user is chatting, counts as interaction)
+	_behavior.state_changed.connect(func(new_state: String, _old_state: String):
+		if new_state == "attentive":
+			_persistent_state.record_interaction()
+	)
 
 	# ── Desktop physics (taskbar, perching, dragging, walking) ────────
 	_desktop_physics = preload("res://scripts/avatar/desktop_physics.gd").new()
 	add_child(_desktop_physics)
+	_desktop_physics.fell.connect(_on_physics_fell)
+	_desktop_physics.drag_started.connect(_on_physics_drag_started)
+	_desktop_physics.drag_ended.connect(_on_physics_drag_ended)
+	_desktop_physics.walking.connect(_on_physics_walking)
+
+	# ── Model mapper (format-agnostic bone/blend shape mapping) ───────
+	_model_mapper = preload("res://scripts/avatar/model_mapper.gd").new()
+	add_child(_model_mapper)
 
 	# ── Load model ────────────────────────────────────────────────────────
 	_loader_ref = preload("res://scripts/avatar/loader.gd").new()
@@ -171,12 +193,15 @@ func _ready() -> void:
 	_loader_ref.model_failed.connect(func(err): add_chat_message("System", "Model error: " + err))
 
 	var model_path = "res://assets/models/default.vrm"
+	_last_model_path = model_path
 	if FileAccess.file_exists(model_path):
 		_loader_ref.load_model(model_path)
 	else:
 		add_chat_message("System", "No default model found at " + model_path)
 
-	add_chat_message("System", "oprojecto ready. Type or press F2 to talk.")
+	# ── Startup greeting ──────────────────────────────────────────────
+	var greeting := _build_startup_greeting()
+	add_chat_message("System", greeting)
 	print("[main] Ready")
 
 func _process(delta: float) -> void:
@@ -230,6 +255,20 @@ func _unhandled_input(event: InputEvent) -> void:
 				if awareness and awareness.current_state == awareness.State.CLOSEUP:
 					awareness.move_down()
 
+	# Mouse click on avatar → start drag; release → end drag
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				if current_model and _desktop_physics and _raycast_hit_model(event.position):
+					_is_dragging = true
+					_desktop_physics.start_drag(event.position)
+					get_viewport().set_input_as_handled()
+			else:
+				if _is_dragging and _desktop_physics:
+					_is_dragging = false
+					_desktop_physics.end_drag()
+					get_viewport().set_input_as_handled()
+
 	# Scroll wheel zoom in closeup mode
 	if event is InputEventMouseButton and event.pressed:
 		if awareness and awareness.current_state == awareness.State.CLOSEUP:
@@ -273,6 +312,18 @@ func _on_model_loaded(model: Node3D) -> void:
 		anim_system.setup(model)
 		print("[main] Available animations: ", anim_system.get_available())
 
+	# Run model mapper to create format-agnostic mapping
+	if _model_mapper:
+		var mapping = _model_mapper.create_mapping(model, _last_model_path)
+		if not mapping.is_empty():
+			print("[main] Model mapping: ", mapping.get("format", "?"),
+				" (confidence: ", mapping.get("confidence", 0.0), ")")
+			# Pass mapping to expressions and animation for mapped name support
+			if expressions:
+				expressions.set_blend_shape_mapping(mapping.get("blend_shapes", {}))
+			if anim_system:
+				anim_system.set_bone_mapping(mapping.get("bones", {}))
+
 	# Wire up ExpressionManager (orchestrates all three layers)
 	if _expr_manager:
 		_expr_manager.setup(expressions, anim_system, lipsync)
@@ -313,10 +364,10 @@ func _on_chat_toggle() -> void:
 func _on_model_selected(idx: int) -> void:
 	var name = _model_selector.get_item_text(idx)
 	if name == "default":
-		_loader_ref.load_model("res://assets/models/default.vrm")
+		_last_model_path = "res://assets/models/default.vrm"
 	else:
-		var path = MODELS_DIR + name + ".vrm"
-		_loader_ref.load_model(path)
+		_last_model_path = MODELS_DIR + name + ".vrm"
+	_loader_ref.load_model(_last_model_path)
 	add_chat_message("System", "Loading model: " + name)
 
 func _on_anim_selected(idx: int) -> void:
@@ -371,27 +422,27 @@ func _on_connection_mode_changed(mode: String) -> void:
 func _on_voice_state_changed(state: String) -> void:
 	match state:
 		"listening":
-			if _sys_log:
-				_sys_log.text = "REC  Listening... (F2 to stop)"
-				_sys_log.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3, 1.0))
+			if chat_panel and chat_panel._sys_log:
+				chat_panel._sys_log.text = "REC  Listening... (F2 to stop)"
+				chat_panel._sys_log.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3, 1.0))
 		"processing":
-			if _sys_log:
-				_sys_log.text = "Processing..."
-				_sys_log.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7, 0.9))
+			if chat_panel and chat_panel._sys_log:
+				chat_panel._sys_log.text = "Processing..."
+				chat_panel._sys_log.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7, 0.9))
 		"generating_audio":
-			if _sys_log:
-				_sys_log.text = "Generating voice..."
-				_sys_log.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7, 0.9))
+			if chat_panel and chat_panel._sys_log:
+				chat_panel._sys_log.text = "Generating voice..."
+				chat_panel._sys_log.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7, 0.9))
 		"speaking":
 			if awareness:
 				awareness.set_talking(true)
-			if _sys_log:
-				_sys_log.text = ""
+			if chat_panel and chat_panel._sys_log:
+				chat_panel._sys_log.text = ""
 		"idle":
 			if awareness:
 				awareness.set_talking(false)
-			if _sys_log:
-				_sys_log.text = ""
+			if chat_panel and chat_panel._sys_log:
+				chat_panel._sys_log.text = ""
 
 func _on_stt_result(text: String) -> void:
 	print("[main] STT result: '", text, "'")
@@ -408,13 +459,29 @@ func _on_stt_result(text: String) -> void:
 	# Hub auto-chains STT → chat, so the response will come via chat_response signal
 
 func _on_emotion_received(emotion_data: Variant) -> void:
-	"""Handle emotion from voice pipeline — route to expression manager."""
+	"""Handle emotion from voice pipeline — route to expression manager + persistent state."""
 	if not _expr_manager:
 		return
+	var emotion_dict: Dictionary
 	if emotion_data is Dictionary:
-		_expr_manager.set_emotion(emotion_data)
+		emotion_dict = emotion_data
 	elif emotion_data is String:
-		_expr_manager.set_emotion({"primary": emotion_data, "primary_intensity": 0.7, "secondary": "", "secondary_intensity": 0.0})
+		emotion_dict = {"primary": emotion_data, "primary_intensity": 0.7, "secondary": "", "secondary_intensity": 0.0}
+	else:
+		return
+
+	_expr_manager.set_emotion(emotion_dict)
+
+	# Update persistent state mood
+	var mood: String = emotion_dict.get("primary", "neutral")
+	var momentum: float = emotion_dict.get("primary_intensity", 0.5)
+	if _persistent_state:
+		_persistent_state.update_mood(mood, momentum)
+	# Sync mood to behavior tree and ambient LLM
+	if _behavior:
+		_behavior.on_mood_changed(mood)
+	if _ambient_llm:
+		_ambient_llm.set_mood(mood)
 
 func _on_emotion_changed(emotion: String, intensity: float) -> void:
 	# Expression system notifies us — for UI/logging purposes
@@ -429,14 +496,41 @@ func _on_behavior_animation(anim_name: String) -> void:
 	if _expr_manager and anim_system and anim_system.has_animation(anim_name):
 		anim_system.play(anim_name)
 
-func _on_behavior_speak(prompt: String) -> void:
-	"""Behavior tree wants Kira to say something unprompted.
-	Routed through ambient_llm for rate limiting and filtering."""
-	# Ambient LLM handles this via the lambda connected in _ready
-	# This handler is kept for direct calls if needed
-	if not _ambient_llm:
-		if voice_pipeline and voice_pipeline.current_state == voice_pipeline.PipelineState.IDLE:
-			voice_pipeline.send_chat(prompt, [])
+func _on_physics_fell() -> void:
+	"""Avatar fell and landed on the taskbar — play surprised reaction."""
+	if _expr_manager:
+		_expr_manager.set_emotion({"primary": "surprised", "primary_intensity": 0.8, "secondary": "", "secondary_intensity": 0.0})
+
+func _on_physics_drag_started() -> void:
+	"""User started dragging the avatar."""
+	if _expr_manager:
+		_expr_manager.set_emotion({"primary": "surprised", "primary_intensity": 0.6, "secondary": "", "secondary_intensity": 0.0})
+
+func _on_physics_drag_ended() -> void:
+	"""User released the avatar from drag."""
+	if _expr_manager:
+		_expr_manager.set_emotion({"primary": "happy", "primary_intensity": 0.5, "secondary": "", "secondary_intensity": 0.0})
+
+func _on_physics_walking(direction: int) -> void:
+	"""Avatar started or stopped walking."""
+	# Future: trigger walk animation when available
+	pass
+
+func _build_startup_greeting() -> String:
+	"""Build a greeting based on persistent state."""
+	if not _persistent_state:
+		return "oprojecto ready. Type or press F2 to talk."
+
+	var ctx = _persistent_state.get_greeting_context()
+	var time_since: float = ctx.get("seconds_since_last_seen", -1.0)
+	var session_count: int = ctx.get("session_count", 1)
+
+	if session_count <= 1 or time_since < 0:
+		return "Nice to meet you! Type or press F2 to talk."
+	elif time_since > 3600:
+		return "Hey, it's been a while! Welcome back."
+	else:
+		return "Hey again! Ready when you are."
 
 func add_chat_message(sender: String, text: String) -> void:
 	if sender == "System":

@@ -185,6 +185,46 @@ func setup(model: Node3D) -> void:
 		clip["bone_map"] = bone_map
 		print("[anim] ", clip_name, ": ", matched, " body bones matched")
 
+func set_bone_mapping(mapping: Dictionary) -> void:
+	"""Apply a model_mapper bone mapping — overrides the hardcoded HUMANOID_TO_JBIP table.
+	mapping keys are humanoid canonical names (hips, spine, etc.),
+	values are actual bone names in the model's skeleton."""
+	if not _target_skeleton:
+		return
+	# Re-map all loaded clips using the new mapping
+	for clip_name in _clips:
+		var clip = _clips[clip_name]
+		var node_map: Dictionary = clip["node_map"]
+		var bone_map := {}
+		var matched := 0
+
+		for node_name in node_map:
+			# Try direct match (bone name matches node name)
+			var bone_idx = _target_skeleton.find_bone(node_name)
+
+			# Try humanoid → mapped actual name
+			if bone_idx < 0 and node_name in mapping:
+				bone_idx = _target_skeleton.find_bone(mapping[node_name])
+
+			# Try via HUMANOID_TO_JBIP as fallback
+			if bone_idx < 0 and node_name in HUMANOID_TO_JBIP:
+				bone_idx = _target_skeleton.find_bone(HUMANOID_TO_JBIP[node_name])
+
+			# Try reverse: node uses humanoid name, mapping gives actual
+			if bone_idx < 0:
+				for humanoid_name in mapping:
+					if node_name == humanoid_name or node_name == mapping[humanoid_name]:
+						bone_idx = _target_skeleton.find_bone(mapping[humanoid_name])
+						break
+
+			if bone_idx >= 0:
+				bone_map[node_name] = bone_idx
+				matched += 1
+
+		clip["bone_map"] = bone_map
+		print("[anim] Re-mapped ", clip_name, " with model_mapper: ", matched, " bones")
+
+
 func play(anim_name: String) -> void:
 	if anim_name not in _clips:
 		return

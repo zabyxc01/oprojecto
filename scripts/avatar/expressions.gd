@@ -94,6 +94,28 @@ func setup(model: Node3D) -> void:
 	print("[expressions] Ready: ", _expression_indices.keys())
 
 
+func set_blend_shape_mapping(mapping: Dictionary) -> void:
+	"""Apply a model_mapper blend shape mapping — overrides auto-detected indices.
+	mapping keys are canonical names (happy, sad, blink, aa, etc.),
+	values are blend shape indices."""
+	if not _mesh:
+		return
+	var count = _mesh.mesh.get_blend_shape_count()
+	for key in mapping:
+		var idx: int = int(mapping[key])
+		if idx < 0 or idx >= count:
+			continue
+		# Map expression shapes
+		if key in EXPRESSION_SHAPES:
+			_expression_indices[key] = idx
+			if key not in _weights:
+				_weights[key] = 0.0
+		# Map blink
+		if key == "blink":
+			_blink_index = idx
+	print("[expressions] Applied model_mapper blend shapes: ", _expression_indices.keys())
+
+
 func set_emotion(emotion: String, intensity: float = 0.7) -> void:
 	"""Set target emotion with intensity (0.0-1.0)."""
 	if emotion == _target_emotion and absf(intensity - _target_intensity) < 0.05:
