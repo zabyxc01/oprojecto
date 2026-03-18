@@ -30,6 +30,7 @@ Be warm, slightly playful, and genuine. Never use emojis or markdown."
 
 var conversation_history: Array[Dictionary] = []
 const MAX_HISTORY := 40
+const HISTORY_FILE := "user://chat_history.json"
 
 # Hub client reference — set by main.gd
 var hub_client: HubClient
@@ -40,6 +41,8 @@ var _tts_http: HTTPRequest
 var _audio_player: AudioStreamPlayer
 
 func _ready() -> void:
+	_load_history()
+
 	_llm_http = HTTPRequest.new()
 	_llm_http.timeout = 60.0
 	add_child(_llm_http)
@@ -84,6 +87,7 @@ var _tts_timeout_timer: SceneTreeTimer = null
 func on_hub_chat_response(text: String, done: bool, emotion: String) -> void:
 	if done and text != "":
 		conversation_history.append({"role": "assistant", "content": text})
+		_save_history()
 		on_response.emit(text)
 		if emotion != "neutral" and emotion != "":
 			on_emotion.emit(emotion)
@@ -166,6 +170,24 @@ func _on_audio_finished() -> void:
 	else:
 		_set_state(PipelineState.IDLE)
 
+# ── History Persistence ──────────────────────────────────────────────────────
+func _save_history() -> void:
+	var file = FileAccess.open(HISTORY_FILE, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(conversation_history))
+		print("[pipeline] History saved (", conversation_history.size(), " messages)")
+
+func _load_history() -> void:
+	if not FileAccess.file_exists(HISTORY_FILE):
+		return
+	var file = FileAccess.open(HISTORY_FILE, FileAccess.READ)
+	if not file:
+		return
+	var data = JSON.parse_string(file.get_as_text())
+	if data and data is Array:
+		conversation_history.assign(data)
+		print("[pipeline] History loaded (", conversation_history.size(), " messages)")
+
 # ── PTT (placeholder — needs mic capture implementation) ──────────────────────
 func toggle_ptt() -> void:
 	match current_state:
@@ -217,6 +239,7 @@ func _process_text_direct(user_text: String) -> void:
 
 	var response_text: String = json["message"]["content"]
 	conversation_history.append({"role": "assistant", "content": response_text})
+	_save_history()
 
 	on_response.emit(response_text)
 

@@ -556,17 +556,33 @@ func add_chat_message(sender: String, text: String) -> void:
 		bubble_style.content_margin_bottom = 6
 		bubble.add_theme_stylebox_override("panel", bubble_style)
 
+		var display_text := text
+		# For Kira's messages: extract stage directions, show as header
+		if not is_user:
+			var directions := []
+			var regex = RegEx.new()
+			regex.compile("\\(([^)]+)\\)")
+			for m in regex.search_all(text):
+				directions.append(m.get_string(1))
+			var clean = regex.sub(text, "", true).strip_edges()
+			# Replace multiple spaces from removal
+			while clean.contains("  "):
+				clean = clean.replace("  ", " ")
+			if directions.size() > 0:
+				display_text = "[i][color=#8888aa](" + ", ".join(directions) + ")[/color][/i]\n" + clean
+			else:
+				display_text = clean
+
 		var label = RichTextLabel.new()
 		label.bbcode_enabled = true
 		label.fit_content = true
 		label.scroll_active = false
-		label.text = text
+		label.text = display_text
 		label.add_theme_font_size_override("normal_font_size", config.chat_font_size)
 		if is_user:
 			label.add_theme_color_override("default_color", config.chat_text_user_color)
 		else:
 			label.add_theme_color_override("default_color", config.chat_text_kira_color)
-		# Fixed width so text wraps properly
 		label.custom_minimum_size.x = 240
 		bubble.add_child(label)
 		container.add_child(bubble)
