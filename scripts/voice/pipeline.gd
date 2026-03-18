@@ -290,7 +290,7 @@ func _stop_recording() -> void:
 
 	if hub_connected and hub_client:
 		print("[pipeline] Sending audio to hub for STT...")
-		hub_client.send_audio(wav_data, MIC_SAMPLE_RATE)
+		hub_client.send_audio(wav_data, MIC_SAMPLE_RATE, conversation_history)
 		# Hub auto-chains: STT → chat → TTS (auto_chat: true)
 		# Response comes back via hub_client signals
 	else:

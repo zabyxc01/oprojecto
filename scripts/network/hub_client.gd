@@ -61,7 +61,7 @@ func send_chat(text: String, history: Array) -> void:
 		},
 	})
 
-func send_audio(audio_data: PackedByteArray, sample_rate: int = 44100) -> void:
+func send_audio(audio_data: PackedByteArray, sample_rate: int = 44100, history: Array = []) -> void:
 	if not _is_connected:
 		return
 	_send({
@@ -73,6 +73,7 @@ func send_audio(audio_data: PackedByteArray, sample_rate: int = 44100) -> void:
 			"format": "wav",
 			"sample_rate": sample_rate,
 			"auto_chat": true,
+			"history": history,
 		},
 	})
 
