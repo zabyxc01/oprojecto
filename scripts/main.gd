@@ -168,6 +168,29 @@ func _ready() -> void:
 	text_input.mouse_filter = Control.MOUSE_FILTER_STOP
 	text_input.focus_mode = Control.FOCUS_ALL
 
+	# Center/focus button
+	var center_btn = Button.new()
+	center_btn.text = "◎"
+	center_btn.add_theme_font_size_override("font_size", 18)
+	var cbtn_style = StyleBoxFlat.new()
+	cbtn_style.bg_color = Color(0.15, 0.15, 0.2, 0.6)
+	cbtn_style.corner_radius_top_left = 18
+	cbtn_style.corner_radius_top_right = 18
+	cbtn_style.corner_radius_bottom_left = 18
+	cbtn_style.corner_radius_bottom_right = 18
+	cbtn_style.content_margin_left = 8
+	cbtn_style.content_margin_right = 8
+	center_btn.add_theme_stylebox_override("normal", cbtn_style)
+	var cbtn_hover = cbtn_style.duplicate()
+	cbtn_hover.bg_color = Color(0.25, 0.25, 0.5, 0.7)
+	center_btn.add_theme_stylebox_override("hover", cbtn_hover)
+	center_btn.add_theme_stylebox_override("pressed", cbtn_hover)
+	center_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	center_btn.add_theme_color_override("font_color", Color(0.8, 0.8, 0.9))
+	center_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	center_btn.pressed.connect(func(): awareness.toggle_closeup())
+	input_bar.add_child(center_btn)
+
 	chat_panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	vbox.mouse_filter = Control.MOUSE_FILTER_PASS
 	_chat_scroll.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -351,14 +374,24 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F5:
 				chat_panel.visible = !chat_panel.visible
 			KEY_ESCAPE:
-				get_tree().quit()
+				if awareness and awareness.current_state == awareness.State.CLOSEUP:
+					awareness.set_closeup(false)
+				else:
+					get_tree().quit()
+			KEY_UP:
+				if awareness and awareness.current_state == awareness.State.CLOSEUP:
+					awareness.move_up()
+			KEY_DOWN:
+				if awareness and awareness.current_state == awareness.State.CLOSEUP:
+					awareness.move_down()
 
-	# Click on avatar → toggle closeup
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if current_model and _raycast_hit_model(event.position):
-			awareness.toggle_closeup()
-			# Update passthrough when she moves center
-			call_deferred("_refresh_passthrough")
+	# Scroll wheel zoom in closeup mode
+	if event is InputEventMouseButton and event.pressed:
+		if awareness and awareness.current_state == awareness.State.CLOSEUP:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				awareness.zoom_in()
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				awareness.zoom_out()
 
 func _raycast_hit_model(screen_pos: Vector2) -> bool:
 	var from = camera.project_ray_origin(screen_pos)
