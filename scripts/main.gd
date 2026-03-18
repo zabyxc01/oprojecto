@@ -16,6 +16,9 @@ var expressions: Node = null
 var _expr_manager: Node = null
 var _screen_context: Node = null
 var _behavior: Node = null
+var _ambient_llm: Node = null
+var _persistent_state: Node = null
+var _desktop_physics: Node = null
 var hub_client: HubClient = null
 var connection_manager: ConnectionManager = null
 var config: Node = null
@@ -142,6 +145,25 @@ func _ready() -> void:
 	_behavior.wants_animation.connect(_on_behavior_animation)
 	_behavior.wants_to_speak.connect(_on_behavior_speak)
 
+	# ── Ambient LLM (rate-limited context queries) ────────────────────
+	_ambient_llm = preload("res://scripts/awareness/ambient_llm.gd").new()
+	add_child(_ambient_llm)
+	_ambient_llm.setup(voice_pipeline)
+	_screen_context.context_changed.connect(_ambient_llm.on_context_changed)
+	# Route behavior speak requests through ambient LLM for filtering
+	_behavior.wants_to_speak.connect(func(prompt):
+		var ctx = _screen_context.get_current()
+		_ambient_llm.request_query(prompt, "observation", ctx)
+	)
+
+	# ── Persistent state (mood, familiarity, facts) ───────────────────
+	_persistent_state = preload("res://scripts/awareness/persistent_state.gd").new()
+	add_child(_persistent_state)
+
+	# ── Desktop physics (taskbar, perching, dragging, walking) ────────
+	_desktop_physics = preload("res://scripts/avatar/desktop_physics.gd").new()
+	add_child(_desktop_physics)
+
 	# ── Load model ────────────────────────────────────────────────────────
 	_loader_ref = preload("res://scripts/avatar/loader.gd").new()
 	add_child(_loader_ref)
@@ -164,6 +186,10 @@ func _process(delta: float) -> void:
 		_screen_context.update(delta)
 	if _behavior:
 		_behavior.update(delta)
+	if _persistent_state:
+		_persistent_state.update(delta)
+	if _desktop_physics:
+		_desktop_physics.update(delta)
 	# ExpressionManager handles all three layers: animation, expressions, lip sync
 	if _expr_manager:
 		var speaking = voice_pipeline and voice_pipeline.current_state == voice_pipeline.PipelineState.SPEAKING
@@ -251,6 +277,10 @@ func _on_model_loaded(model: Node3D) -> void:
 	if _expr_manager:
 		_expr_manager.setup(expressions, anim_system, lipsync)
 
+	# Wire up desktop physics
+	if _desktop_physics:
+		_desktop_physics.setup(current_model, camera)
+
 	# Refresh animation selector
 	if _toolbar and anim_system:
 		_toolbar.refresh_animations(anim_system.get_available())
@@ -324,6 +354,8 @@ func _on_text_submitted(text: String) -> void:
 	voice_pipeline.send_text(text)
 	if _behavior:
 		_behavior.on_user_interaction()
+	if _persistent_state:
+		_persistent_state.record_interaction()
 
 func _on_voice_response(text: String) -> void:
 	add_chat_message("Kira", text)
@@ -399,15 +431,12 @@ func _on_behavior_animation(anim_name: String) -> void:
 
 func _on_behavior_speak(prompt: String) -> void:
 	"""Behavior tree wants Kira to say something unprompted.
-	Uses the voice pipeline to send the prompt as a system-level query."""
-	if not voice_pipeline or not hub_client:
-		return
-	# Only if not currently speaking/processing
-	if voice_pipeline.current_state != voice_pipeline.PipelineState.IDLE:
-		return
-	# Send as a chat request with the ambient prompt as user text
-	# The companion extension's system prompt + this ambient prompt = Kira's reaction
-	voice_pipeline.send_chat(prompt, [])
+	Routed through ambient_llm for rate limiting and filtering."""
+	# Ambient LLM handles this via the lambda connected in _ready
+	# This handler is kept for direct calls if needed
+	if not _ambient_llm:
+		if voice_pipeline and voice_pipeline.current_state == voice_pipeline.PipelineState.IDLE:
+			voice_pipeline.send_chat(prompt, [])
 
 func add_chat_message(sender: String, text: String) -> void:
 	if sender == "System":
