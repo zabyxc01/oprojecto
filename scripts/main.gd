@@ -15,6 +15,7 @@ var voice_pipeline: Node = null
 var lipsync: Node = null
 var anim_system: Node = null
 var expressions: Node = null
+var _expr_manager: Node = null
 var hub_client: HubClient = null
 var connection_manager: ConnectionManager = null
 var config: Node = null
@@ -336,13 +337,17 @@ func _ready() -> void:
 
 	expressions = preload("res://scripts/avatar/expressions.gd").new()
 	add_child(expressions)
-	voice_pipeline.on_emotion.connect(func(e): expressions.set_emotion(e))
-	expressions.emotion_changed.connect(_on_emotion_changed)
-	expressions.emotion_faded.connect(_on_emotion_faded)
 
 	anim_system = preload("res://scripts/avatar/animation.gd").new()
 	add_child(anim_system)
 	anim_system.load_all_animations()
+
+	# ExpressionManager orchestrates all three layers
+	_expr_manager = preload("res://scripts/avatar/expression_manager.gd").new()
+	add_child(_expr_manager)
+	voice_pipeline.on_emotion.connect(_on_emotion_received)
+	expressions.emotion_changed.connect(_on_emotion_changed)
+	expressions.emotion_faded.connect(_on_emotion_faded)
 
 	# ── Load model ────────────────────────────────────────────────────────
 	_loader_ref = preload("res://scripts/avatar/loader.gd").new()
@@ -362,13 +367,20 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if current_model and awareness:
 		awareness.update(current_model, delta, camera)
-	if anim_system:
-		anim_system.update(delta)
-	if lipsync:
+	# ExpressionManager handles all three layers: animation, expressions, lip sync
+	if _expr_manager:
 		var speaking = voice_pipeline and voice_pipeline.current_state == voice_pipeline.PipelineState.SPEAKING
-		lipsync.update(delta, speaking)
-	if expressions:
-		expressions.update(delta)
+		_expr_manager.set_speaking(speaking)
+		_expr_manager.update(delta)
+	else:
+		# Fallback if no manager
+		if anim_system:
+			anim_system.update(delta)
+		if lipsync:
+			var speaking = voice_pipeline and voice_pipeline.current_state == voice_pipeline.PipelineState.SPEAKING
+			lipsync.update(delta, speaking)
+		if expressions:
+			expressions.update(delta)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
@@ -434,10 +446,11 @@ func _on_model_loaded(model: Node3D) -> void:
 	# Set up animations for the new model
 	if anim_system:
 		anim_system.setup(model)
-		# Play idle animation if available
-		if anim_system.has_animation("LookAround"):
-			anim_system.play("LookAround")
 		print("[main] Available animations: ", anim_system.get_available())
+
+	# Wire up ExpressionManager (orchestrates all three layers)
+	if _expr_manager:
+		_expr_manager.setup(expressions, anim_system, lipsync)
 
 	# Refresh animation selector
 	if _anim_selector:
@@ -589,43 +602,22 @@ func _on_stt_result(text: String) -> void:
 	voice_pipeline.conversation_history.append({"role": "user", "content": text})
 	# Hub auto-chains STT → chat, so the response will come via chat_response signal
 
-const EMOTION_ANIM_MAP := {
-	"happy": "Clapping",
-	"angry": "Angry",
-	"sad": "Sad",
-	"surprised": "Surprised",
-	"relaxed": "Relax",
-	"blush": "Blush",
-	"sleepy": "Sleepy",
-	"thinking": "Thinking",
-	"neutral": "LookAround",
-}
+func _on_emotion_received(emotion_data: Variant) -> void:
+	"""Handle emotion from voice pipeline — route to expression manager."""
+	if not _expr_manager:
+		return
+	if emotion_data is Dictionary:
+		_expr_manager.set_emotion(emotion_data)
+	elif emotion_data is String:
+		_expr_manager.set_emotion({"primary": emotion_data, "primary_intensity": 0.7, "secondary": "", "secondary_intensity": 0.0})
 
-var _current_emotion_anim := ""
-
-func _on_emotion_changed(emotion: String) -> void:
-	if not anim_system:
-		return
-	var clip = EMOTION_ANIM_MAP.get(emotion, "")
-	if clip.is_empty() or not anim_system.has_animation(clip):
-		return
-	if clip == _current_emotion_anim:
-		return
-	_current_emotion_anim = clip
-	anim_system.play(clip)
+func _on_emotion_changed(emotion: String, intensity: float) -> void:
+	# Expression system notifies us — for UI/logging purposes
+	pass
 
 func _on_emotion_faded() -> void:
-	if not anim_system:
-		return
-	var idle = "LookAround"
-	if not anim_system.has_animation(idle):
-		var avail = anim_system.get_available()
-		if avail.size() > 0:
-			idle = avail[0]
-		else:
-			return
-	_current_emotion_anim = idle
-	anim_system.play(idle)
+	# Expression faded back to neutral
+	pass
 
 func add_chat_message(sender: String, text: String) -> void:
 	# System messages — update the static log strip, don't add to chat

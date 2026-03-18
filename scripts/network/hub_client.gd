@@ -8,7 +8,7 @@ class_name HubClient
 
 signal connected
 signal disconnected
-signal chat_response(text: String, done: bool, emotion: String)
+signal chat_response(text: String, done: bool, emotion: Variant)
 signal tts_audio(data: PackedByteArray, format: String)
 signal stt_result(text: String)
 signal hub_state(services: Dictionary)
@@ -143,7 +143,14 @@ func _handle_message(raw: String) -> void:
 
 	match msg_type:
 		"chat.response":
-			chat_response.emit(payload.get("text", ""), payload.get("done", true), payload.get("emotion", "neutral"))
+			var emotion_raw = payload.get("emotion", "neutral")
+			# Support both old string format and new dict format
+			var emotion_data: Variant
+			if emotion_raw is Dictionary:
+				emotion_data = emotion_raw
+			else:
+				emotion_data = {"primary": str(emotion_raw), "primary_intensity": 0.7, "secondary": "", "secondary_intensity": 0.0}
+			chat_response.emit(payload.get("text", ""), payload.get("done", true), emotion_data)
 
 		"tts.audio":
 			var b64: String = payload.get("audio_b64", "")

@@ -6,7 +6,7 @@ class_name VoicePipeline
 #   DIRECT mode: direct HTTP to ollama + kokoro (original behavior, now fallback)
 
 signal on_response(text: String)
-signal on_emotion(emotion: String)
+signal on_emotion(emotion_data: Variant)
 signal on_state_changed(state: String)
 
 enum PipelineState { IDLE, LISTENING, PROCESSING, GENERATING_AUDIO, SPEAKING }
@@ -98,13 +98,18 @@ func _send_via_hub(text: String) -> void:
 
 var _tts_timeout_timer: SceneTreeTimer = null
 
-func on_hub_chat_response(text: String, done: bool, emotion: String) -> void:
+func on_hub_chat_response(text: String, done: bool, emotion: Variant) -> void:
 	if done and text != "":
 		conversation_history.append({"role": "assistant", "content": text})
 		_save_history()
 		on_response.emit(text)
-		if emotion != "neutral" and emotion != "":
-			on_emotion.emit(emotion)
+		# Emit emotion data (dict or string)
+		if emotion is Dictionary:
+			var primary: String = emotion.get("primary", "neutral")
+			if primary != "neutral":
+				on_emotion.emit(emotion)
+		elif emotion is String and emotion != "neutral" and emotion != "":
+			on_emotion.emit({"primary": emotion, "primary_intensity": 0.7, "secondary": "", "secondary_intensity": 0.0})
 		# Waiting for TTS audio to arrive
 		_set_state(PipelineState.GENERATING_AUDIO)
 		_tts_timeout_timer = get_tree().create_timer(30.0)
@@ -524,7 +529,7 @@ func _process_text_direct(user_text: String) -> void:
 	var emotion := _detect_emotion(response_text)
 	print("[pipeline] Detected emotion: ", emotion, " from: ", response_text.substr(0, 80))
 	if emotion != "neutral" and emotion != "":
-		on_emotion.emit(emotion)
+		on_emotion.emit({"primary": emotion, "primary_intensity": 0.7, "secondary": "", "secondary_intensity": 0.0})
 
 	on_response.emit(response_text)
 

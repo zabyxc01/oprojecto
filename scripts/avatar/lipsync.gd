@@ -52,7 +52,7 @@ func setup(model: Node3D) -> void:
 		for i in range(count):
 			print("[lipsync] Available: ", _mesh.mesh.get_blend_shape_name(i))
 
-func update(delta: float, is_speaking: bool) -> void:
+func update(delta: float, is_speaking: bool, mouth_suppression: float = 0.0) -> void:
 	if not _mesh or _blend_indices.is_empty():
 		return
 
@@ -70,9 +70,10 @@ func update(delta: float, is_speaking: bool) -> void:
 			_blend_timer = 0.0
 			_blend_target = BLEND_PRESETS[randi() % BLEND_PRESETS.size()]
 
-		# Apply to blend shapes
+		# Apply to blend shapes (attenuated by expression mouth override)
+		var attenuation = 1.0 - clampf(mouth_suppression, 0.0, 0.75)
 		for key in _blend_indices:
-			var weight = _amplitude * _blend_target.get(key, 0.0)
+			var weight = _amplitude * _blend_target.get(key, 0.0) * attenuation
 			_mesh.set_blend_shape_value(_blend_indices[key], weight)
 	else:
 		# Reset mouth
