@@ -16,6 +16,8 @@ var lipsync: Node = null
 var anim_system: Node = null
 var expressions: Node = null
 var _expr_manager: Node = null
+var _screen_context: Node = null
+var _behavior: Node = null
 var hub_client: HubClient = null
 var connection_manager: ConnectionManager = null
 var config: Node = null
@@ -349,6 +351,17 @@ func _ready() -> void:
 	expressions.emotion_changed.connect(_on_emotion_changed)
 	expressions.emotion_faded.connect(_on_emotion_faded)
 
+	# ── Screen awareness + behavior tree ──────────────────────────────
+	_screen_context = preload("res://scripts/awareness/screen_context.gd").new()
+	add_child(_screen_context)
+
+	_behavior = preload("res://scripts/awareness/behavior.gd").new()
+	add_child(_behavior)
+
+	_screen_context.context_changed.connect(_behavior.on_context_changed)
+	_behavior.wants_animation.connect(_on_behavior_animation)
+	_behavior.wants_to_speak.connect(_on_behavior_speak)
+
 	# ── Load model ────────────────────────────────────────────────────────
 	_loader_ref = preload("res://scripts/avatar/loader.gd").new()
 	add_child(_loader_ref)
@@ -367,6 +380,10 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if current_model and awareness:
 		awareness.update(current_model, delta, camera)
+	if _screen_context:
+		_screen_context.update(delta)
+	if _behavior:
+		_behavior.update(delta)
 	# ExpressionManager handles all three layers: animation, expressions, lip sync
 	if _expr_manager:
 		var speaking = voice_pipeline and voice_pipeline.current_state == voice_pipeline.PipelineState.SPEAKING
@@ -387,6 +404,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		match event.keycode:
 			KEY_F2:
 				voice_pipeline.toggle_ptt()
+				if _behavior:
+					_behavior.on_user_interaction()
 			KEY_F3:
 				_toolbar.visible = !_toolbar.visible
 				_set_window_above(_toolbar.visible)
@@ -551,6 +570,8 @@ func _on_text_submitted(text: String) -> void:
 	text_input.clear()
 	add_chat_message("You", text)
 	voice_pipeline.send_text(text)
+	if _behavior:
+		_behavior.on_user_interaction()
 
 func _on_voice_response(text: String) -> void:
 	add_chat_message("Kira", text)
@@ -618,6 +639,23 @@ func _on_emotion_changed(emotion: String, intensity: float) -> void:
 func _on_emotion_faded() -> void:
 	# Expression faded back to neutral
 	pass
+
+func _on_behavior_animation(anim_name: String) -> void:
+	"""Behavior tree requests an animation."""
+	if _expr_manager and anim_system and anim_system.has_animation(anim_name):
+		anim_system.play(anim_name)
+
+func _on_behavior_speak(prompt: String) -> void:
+	"""Behavior tree wants Kira to say something unprompted.
+	Uses the voice pipeline to send the prompt as a system-level query."""
+	if not voice_pipeline or not hub_client:
+		return
+	# Only if not currently speaking/processing
+	if voice_pipeline.current_state != voice_pipeline.PipelineState.IDLE:
+		return
+	# Send as a chat request with the ambient prompt as user text
+	# The companion extension's system prompt + this ambient prompt = Kira's reaction
+	voice_pipeline.send_chat(prompt, [])
 
 func add_chat_message(sender: String, text: String) -> void:
 	# System messages — update the static log strip, don't add to chat
