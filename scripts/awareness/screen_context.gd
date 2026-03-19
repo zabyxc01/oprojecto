@@ -73,8 +73,12 @@ func force_poll() -> Dictionary:
 func _poll_context() -> Dictionary:
 	var context := {}
 
-	# Active window title
-	context["window_title"] = _get_active_window_title()
+	# Active window title (or pinned focus window)
+	var focus_override: String = get_meta("focus_window", "") if has_meta("focus_window") else ""
+	if focus_override != "":
+		context["window_title"] = _get_window_title_by_name(focus_override)
+	else:
+		context["window_title"] = _get_active_window_title()
 
 	# Classify what the user is doing
 	context["activity"] = _classify_activity(context["window_title"])
@@ -105,6 +109,18 @@ func _get_active_window_title() -> String:
 	if exit == 0 and output.size() > 0:
 		return output[0].strip_edges()
 	return ""
+
+
+func _get_window_title_by_name(name_pattern: String) -> String:
+	"""Get the full title of a window matching name_pattern."""
+	var output := []
+	var exit = OS.execute("xdotool", ["search", "--name", name_pattern, "getwindowname"], output, true)
+	if exit == 0 and output.size() > 0:
+		# Return the first match
+		var first_line = output[0].strip_edges().split("\n")[0]
+		if not first_line.is_empty():
+			return first_line
+	return name_pattern
 
 
 func _get_idle_time() -> int:

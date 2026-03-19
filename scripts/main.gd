@@ -85,6 +85,10 @@ func _ready() -> void:
 		config.set_value("chat_font_size", int(v))
 		chat_panel.update_font_size(int(v))
 	)
+	_toolbar.voice_enabled_changed.connect(_on_voice_toggle)
+	_toolbar.mic_enabled_changed.connect(_on_mic_toggle)
+	_toolbar.attention_changed.connect(_on_attention_changed)
+	_toolbar.focus_window_changed.connect(_on_focus_window_changed)
 	_model_selector = _toolbar.model_selector
 	_anim_selector = _toolbar.anim_selector
 	add_child(_toolbar)
@@ -239,9 +243,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		match event.keycode:
 			KEY_F2:
-				voice_pipeline.toggle_ptt()
-				if _behavior:
-					_behavior.on_user_interaction()
+				if _mic_enabled:
+					voice_pipeline.toggle_ptt()
+					if _behavior:
+						_behavior.on_user_interaction()
+				else:
+					add_chat_message("System", "Mic disabled — enable in F3 settings")
 			KEY_F3:
 				_toolbar.visible = !_toolbar.visible
 				_set_window_above(_toolbar.visible)
@@ -576,9 +583,34 @@ func _on_physics_drag_ended() -> void:
 		_expr_manager.set_emotion({"primary": "happy", "primary_intensity": 0.5, "secondary": "", "secondary_intensity": 0.0})
 
 func _on_physics_walking(direction: int) -> void:
-	"""Avatar started or stopped walking."""
-	# Future: trigger walk animation when available
 	pass
+
+# ── Toolbar handlers ─────────────────────────────────────────────────────────
+var _voice_enabled := true
+var _mic_enabled := true
+var _focus_window := ""  # empty = follow active window
+
+func _on_voice_toggle(enabled: bool) -> void:
+	_voice_enabled = enabled
+	if voice_pipeline:
+		voice_pipeline.set_meta("voice_enabled", enabled)
+	add_chat_message("System", "Voice " + ("enabled" if enabled else "disabled"))
+
+func _on_mic_toggle(enabled: bool) -> void:
+	_mic_enabled = enabled
+	add_chat_message("System", "Mic " + ("enabled" if enabled else "disabled"))
+
+func _on_attention_changed(mode: String) -> void:
+	_handle_command("/" + mode)
+
+func _on_focus_window_changed(window_title: String) -> void:
+	_focus_window = window_title
+	if _screen_context:
+		_screen_context.set_meta("focus_window", window_title)
+	if window_title.is_empty():
+		add_chat_message("System", "Watching: active window")
+	else:
+		add_chat_message("System", "Watching: " + window_title)
 
 func _build_startup_greeting() -> String:
 	"""Build a greeting based on persistent state."""
