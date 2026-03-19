@@ -157,6 +157,11 @@ func _build_prompt(raw_prompt: String, qt: QueryType, context: Dictionary) -> St
 		parts.append(' — window: "%s"' % _sanitize_title(title))
 	else:
 		parts.append(".")
+	# Background media (YouTube, Spotify, etc. playing in another window)
+	var bg_media: String = context.get("background_media", "")
+	if bg_media != "":
+		parts.append(". Also %s in the background" % bg_media)
+
 	parts.append("\nTime: %s. Your mood: %s." % [
 		_format_time_of_day(time_of_day), _mood,
 	])
