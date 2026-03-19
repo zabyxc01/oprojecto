@@ -322,13 +322,17 @@ func update(delta: float) -> void:
 			player.play(anims[0])
 
 	# Copy Node3D transforms → skeleton bone poses (body bones only)
+	# For Mixamo clips: skip hips position (different coordinate space than VRM)
+	var is_mixamo := bone_map.has("mixamorig_Hips")
 	for node_name in bone_map:
 		var bone_idx: int = bone_map[node_name]
 		var src_node: Node3D = node_map[node_name]
 		_target_skeleton.set_bone_pose_rotation(bone_idx, src_node.quaternion)
 
-		if node_name.ends_with("Hips") or node_name == "hips" or node_name == "Hips" or node_name == "mixamorig_Hips":
-			_target_skeleton.set_bone_pose_position(bone_idx, src_node.position)
+		# Only apply hips position for non-Mixamo clips (VRM native animations)
+		if not is_mixamo:
+			if node_name.ends_with("Hips") or node_name == "hips" or node_name == "Hips":
+				_target_skeleton.set_bone_pose_position(bone_idx, src_node.position)
 
 func has_animation(name: String) -> bool:
 	return name in _clips
