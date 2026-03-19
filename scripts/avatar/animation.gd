@@ -189,11 +189,19 @@ func _load_clip(path: String, anim_name: String) -> void:
 	scene.visible = false
 	add_child(scene)
 
+	# Capture rest pose quaternions BEFORE animation plays
+	var rest_map := {}  # node_name → rest Quaternion
+	for nname in node_map:
+		var n: Node3D = node_map[nname]
+		rest_map[nname] = n.quaternion
+
 	_clips[anim_name] = {
 		"scene": scene,
 		"player": player,
 		"node_map": node_map,
 		"bone_map": {},
+		"rest_map": rest_map,
+		"is_mixamo": node_map.has("mixamorig_Hips"),
 	}
 
 	var anims = player.get_animation_list()
@@ -322,15 +330,25 @@ func update(delta: float) -> void:
 			player.play(anims[0])
 
 	# Copy Node3D transforms → skeleton bone poses (body bones only)
-	# For Mixamo clips: skip hips position (different coordinate space than VRM)
-	var is_mixamo := bone_map.has("mixamorig_Hips")
+	var is_mixamo: bool = clip.get("is_mixamo", false)
+	var rest_map: Dictionary = clip.get("rest_map", {})
+
 	for node_name in bone_map:
 		var bone_idx: int = bone_map[node_name]
 		var src_node: Node3D = node_map[node_name]
-		_target_skeleton.set_bone_pose_rotation(bone_idx, src_node.quaternion)
 
-		# Only apply hips position for non-Mixamo clips (VRM native animations)
-		if not is_mixamo:
+		if is_mixamo and node_name in rest_map:
+			# Delta retargeting: compute change from Mixamo rest pose,
+			# apply that change to VRM rest pose
+			var src_rest: Quaternion = rest_map[node_name]
+			var src_current: Quaternion = src_node.quaternion
+			var delta: Quaternion = src_rest.inverse() * src_current
+			var tgt_rest: Quaternion = _target_skeleton.get_bone_rest(bone_idx).basis.get_rotation_quaternion()
+			_target_skeleton.set_bone_pose_rotation(bone_idx, tgt_rest * delta)
+		else:
+			# VRM native clips: direct quaternion copy (same skeleton convention)
+			_target_skeleton.set_bone_pose_rotation(bone_idx, src_node.quaternion)
+
 			if node_name.ends_with("Hips") or node_name == "hips" or node_name == "Hips":
 				_target_skeleton.set_bone_pose_position(bone_idx, src_node.position)
 
