@@ -310,7 +310,7 @@ func scan_model(model: Node3D) -> Dictionary:
 	# blend shapes across multiple meshes)
 	var meshes := _find_all_meshes_with_blend_shapes(model)
 	for mi: MeshInstance3D in meshes:
-		var count := mi.mesh.get_blend_shape_count()
+		var count: int = mi.mesh.get_blend_shape_count()
 		for i in range(count):
 			blend_shape_data.append({
 				"name": mi.mesh.get_blend_shape_name(i),
@@ -371,7 +371,7 @@ func save_mapping(mapping: Dictionary) -> void:
 	var cache_path := _CACHE_DIR.path_join(model_hash + ".json")
 
 	# Build a serialisable copy (strip non-JSON-safe values like object refs)
-	var save_data := _make_serialisable(mapping)
+	var save_data: Dictionary = _make_serialisable(mapping)
 
 	var file := FileAccess.open(cache_path, FileAccess.WRITE)
 	if not file:
@@ -438,7 +438,7 @@ static func _find_face_mesh_flat(node: Node) -> MeshInstance3D:
 	var best_count := 0
 	var stack: Array[Node] = [node]
 	while not stack.is_empty():
-		var current := stack.pop_back()
+		var current: Node = stack.pop_back()
 		if current is MeshInstance3D:
 			var mi := current as MeshInstance3D
 			if mi.mesh and mi.mesh.get_blend_shape_count() > best_count:
@@ -599,10 +599,10 @@ func _map_bones_structural(skeleton: Skeleton3D, bone_set: Dictionary, existing:
 		return result
 
 	# Find the root with the most descendants (likely the armature root)
-	var best_root := roots[0]
+	var best_root: int = roots[0]
 	var best_descendants := 0
 	for root_idx in roots:
-		var count := _count_descendants(skeleton, root_idx)
+		var count: int = _count_descendants(skeleton, root_idx)
 		if count > best_descendants:
 			best_descendants = count
 			best_root = root_idx
@@ -627,7 +627,7 @@ func _map_bones_structural(skeleton: Skeleton3D, bone_set: Dictionary, existing:
 			result["rightUpperLeg"] = skeleton.get_bone_name(sorted_children[-1])
 
 			# The spine is somewhere in the middle
-			var spine_idx := sorted_children[sorted_children.size() / 2]
+			var spine_idx: int = sorted_children[sorted_children.size() / 2]
 			_map_spine_chain(skeleton, spine_idx, result)
 
 			# Map leg chains
@@ -931,7 +931,7 @@ func _find_all_meshes_with_blend_shapes(node: Node) -> Array:
 	var result := []
 	var stack: Array[Node] = [node]
 	while not stack.is_empty():
-		var current := stack.pop_back()
+		var current: Node = stack.pop_back()
 		if current is MeshInstance3D:
 			var mi := current as MeshInstance3D
 			if mi.mesh and mi.mesh.get_blend_shape_count() > 0:

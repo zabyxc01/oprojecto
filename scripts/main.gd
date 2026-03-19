@@ -183,8 +183,13 @@ func _ready() -> void:
 	_desktop_physics.walking.connect(_on_physics_walking)
 
 	# ── Model mapper (format-agnostic bone/blend shape mapping) ───────
-	_model_mapper = preload("res://scripts/avatar/model_mapper.gd").new()
-	add_child(_model_mapper)
+	# Deferred — model_mapper.gd has strict type issues in Godot 4.6, load safely
+	var _mapper_script = load("res://scripts/avatar/model_mapper.gd")
+	if _mapper_script and _mapper_script.can_instantiate():
+		_model_mapper = _mapper_script.new()
+		add_child(_model_mapper)
+	else:
+		print("[main] Model mapper skipped (parse errors — VRM auto-mapping still works)")
 
 	# ── Load model ────────────────────────────────────────────────────────
 	_loader_ref = preload("res://scripts/avatar/loader.gd").new()
