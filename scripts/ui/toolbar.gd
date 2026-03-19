@@ -17,6 +17,7 @@ signal audio_interval_changed(value: float)
 signal focus_window_changed(window_title: String)
 signal screen_listen_changed(enabled: bool)
 
+var _auto_toggle: CheckButton
 var model_selector: OptionButton
 var anim_selector: OptionButton
 var tts_selector: OptionButton
@@ -146,6 +147,16 @@ func build(config: Node) -> void:
 
 	# ══ BEHAVIOR SECTION ═══════════════════════════════════════════
 	_add_section_label(tb_vbox, "BEHAVIOR")
+
+	# Autonomous toggle — obvious on/off for all autonomous behavior
+	var row_auto = HBoxContainer.new()
+	tb_vbox.add_child(row_auto)
+	_add_label(row_auto, "Autonomous:")
+	_auto_toggle = CheckButton.new()
+	_auto_toggle.button_pressed = true  # default: ON (Aware mode)
+	_auto_toggle.mouse_filter = Control.MOUSE_FILTER_STOP
+	_auto_toggle.toggled.connect(_on_auto_toggled)
+	row_auto.add_child(_auto_toggle)
 
 	# Engagement mode selector
 	var row_engage = HBoxContainer.new()
@@ -331,11 +342,28 @@ func set_engagement_mode(mode: String) -> void:
 	if idx >= 0 and _engagement_selector:
 		_engagement_selector.select(idx)
 		_update_engagement_visibility(idx)
+		if _auto_toggle:
+			_auto_toggle.set_pressed_no_signal(idx != 0)
+
+
+func _on_auto_toggled(on: bool) -> void:
+	"""Top-level autonomous behavior toggle. ON = Aware, OFF = Chat Only."""
+	if on:
+		_engagement_selector.select(1)  # Aware
+		_update_engagement_visibility(1)
+		engagement_mode_changed.emit("aware")
+	else:
+		_engagement_selector.select(0)  # Chat Only
+		_update_engagement_visibility(0)
+		engagement_mode_changed.emit("chat_only")
 
 
 func _on_engagement_selected(idx: int) -> void:
 	"""Handle engagement dropdown selection — update visibility and emit signal."""
 	_update_engagement_visibility(idx)
+	# Keep the top-level toggle in sync
+	if _auto_toggle:
+		_auto_toggle.set_pressed_no_signal(idx != 0)
 	var modes = ["chat_only", "aware", "live"]
 	if idx < modes.size():
 		engagement_mode_changed.emit(modes[idx])
