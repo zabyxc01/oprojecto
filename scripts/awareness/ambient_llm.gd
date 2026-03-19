@@ -122,6 +122,39 @@ func request_query(prompt: String, query_type: String, context: Dictionary) -> b
 	return true
 
 
+func request_live_query(context: Dictionary, screenshot_b64: String, audio_transcript: String) -> bool:
+	"""Combined live mode query — vision + audio + context in one shot."""
+	if not _setup_done:
+		return false
+	if not can_query():
+		return false
+	if _voice_pipeline.current_state != _voice_pipeline.PipelineState.IDLE:
+		return false
+
+	_last_query_time = Time.get_unix_time_from_system()
+
+	var ctx_text := _build_prompt("", QueryType.OBSERVATION, context)
+
+	if screenshot_b64 != "" and _hub_client and _hub_client._is_connected:
+		# Vision query — send screenshot with audio context
+		var prompt := "What do you see? React naturally."
+		if audio_transcript != "":
+			prompt = 'You can see the screen and hear: "%s". React to what you see and hear.' % audio_transcript.substr(0, 300)
+		_hub_client.send_vision(screenshot_b64, ctx_text, prompt)
+		query_sent.emit("live_vision", "live_vision")
+		print("[ambient] Sent live vision query")
+		return true
+	elif audio_transcript != "" and _hub_client and _hub_client._is_connected:
+		# Audio-only query
+		var prompt := 'Content audio: "%s". Comment on what they are watching.' % audio_transcript.substr(0, 300)
+		_hub_client.send_chat(prompt, [], ctx_text)
+		query_sent.emit("live_audio", "live_audio")
+		print("[ambient] Sent live audio query")
+		return true
+
+	return false
+
+
 func set_mood(mood: String) -> void:
 	_mood = mood
 

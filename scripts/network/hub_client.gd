@@ -80,6 +80,21 @@ func send_audio(audio_data: PackedByteArray, sample_rate: int = 44100, history: 
 		},
 	})
 
+func send_vision(image_b64: String, context: String, prompt: String, model: String = "llama3.2-vision:11b") -> void:
+	if not _is_connected:
+		return
+	_send({
+		"type": "vision.analyze",
+		"id": _uuid(),
+		"ts": Time.get_unix_time_from_system(),
+		"payload": {
+			"image_b64": image_b64,
+			"context": context,
+			"prompt": prompt,
+			"model": model,
+		},
+	})
+
 func _send_state_sync() -> void:
 	_send({
 		"type": "state.sync",
