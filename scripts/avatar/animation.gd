@@ -196,6 +196,13 @@ func _load_clip(path: String, anim_name: String) -> void:
 		"bone_map": {},
 	}
 
+	# Debug: print first 5 node names to see what Godot gives us
+	var _dbg_count := 0
+	for _dbg_name in node_map:
+		if _dbg_count < 5:
+			print("[anim] Node: '", _dbg_name, "'")
+			_dbg_count += 1
+
 	var anims = player.get_animation_list()
 	if anims.size() > 0:
 		player.play(anims[0])
