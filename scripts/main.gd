@@ -160,7 +160,10 @@ func _ready() -> void:
 	# ── Ambient LLM (rate-limited context queries) ────────────────────
 	_ambient_llm = preload("res://scripts/awareness/ambient_llm.gd").new()
 	add_child(_ambient_llm)
-	_ambient_llm.setup(voice_pipeline)
+	_ambient_llm.setup(voice_pipeline, hub_client)
+	_ambient_llm.query_sent.connect(func(prompt, qtype):
+		add_chat_message("System", "[%s]" % qtype)
+	)
 	_screen_context.context_changed.connect(_ambient_llm.on_context_changed)
 	# Route behavior speak requests through ambient LLM (sole path)
 	_behavior.wants_to_speak.connect(func(prompt):

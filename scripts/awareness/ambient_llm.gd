@@ -35,6 +35,7 @@ const QUERY_TYPE_NAMES := {
 # ── Internal state ────────────────────────────────────────────────────────────
 
 var _voice_pipeline: Node  # VoicePipeline
+var _hub_client: Node      # HubClient — for direct ambient sends
 var _last_query_time := 0.0
 var _last_context_change_time := 0.0
 var _mood := "content"
@@ -46,8 +47,9 @@ var _setup_done := false
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 
-func setup(voice_pipeline: Node) -> void:
+func setup(voice_pipeline: Node, hub_client: Node = null) -> void:
 	_voice_pipeline = voice_pipeline
+	_hub_client = hub_client
 	_setup_done = true
 	print("[ambient] Setup complete")
 
@@ -107,8 +109,15 @@ func request_query(prompt: String, query_type: String, context: Dictionary) -> b
 	_last_query_time = Time.get_unix_time_from_system()
 	_update_tracking(context)
 
-	_voice_pipeline.send_text(full_prompt)
-	query_sent.emit(full_prompt, _type_name(qt))
+	# Send directly to hub as a chat request with the context as system framing.
+	# The full_prompt goes as the user message — but we DON'T display it in chat.
+	# The companion extension's system prompt + our context = Kira's natural response.
+	if _hub_client and _hub_client._is_connected:
+		_hub_client.send_chat(full_prompt, [])
+	else:
+		_voice_pipeline.send_text(full_prompt)
+
+	query_sent.emit(_type_name(qt), _type_name(qt))
 	print("[ambient] Sent %s query" % _type_name(qt))
 	return true
 
