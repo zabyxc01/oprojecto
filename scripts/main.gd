@@ -476,8 +476,31 @@ func _handle_command(cmd: String) -> void:
 				parts.append("Familiarity: " + _persistent_state.get_familiarity_label())
 				parts.append("Sessions: " + str(_persistent_state.state.get("total_sessions", 0)))
 			add_chat_message("System", "\n".join(parts) if parts.size() > 0 else "No status available")
+		"/help":
+			add_chat_message("System", "\n".join([
+				"[b]Kira Commands[/b]",
+				"",
+				"[color=#e10600]Attention[/color]",
+				"  /focus — watches closely, comments often (30s)",
+				"  /chill — relaxed, rare comments (5 min)",
+				"  /quiet — no ambient comments at all",
+				"  /normal — default behavior (2 min)",
+				"",
+				"[color=#e10600]State[/color]",
+				"  /sleep — she dozes off",
+				"  /wake — wake her up",
+				"  /status — show behavior state + stats",
+				"",
+				"[color=#e10600]Controls[/color]",
+				"  F2 — push to talk (hold to record)",
+				"  F3 — settings panel (model, voice, behavior)",
+				"  F5 — toggle chat panel",
+				"  ESC — exit closeup / quit",
+				"",
+				"[color=#888888]You can also just talk to her normally.[/color]",
+			]))
 		_:
-			add_chat_message("System", "Commands: /focus /chill /quiet /normal /sleep /wake /status")
+			add_chat_message("System", "Unknown command. Type /help for commands.")
 
 func _on_voice_response(text: String) -> void:
 	add_chat_message("Kira", text)
