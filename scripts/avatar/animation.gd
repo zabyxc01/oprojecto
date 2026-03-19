@@ -346,11 +346,11 @@ func update(delta: float) -> void:
 
 		if is_mixamo:
 			# Delta retargeting: Mixamo → VRM
-			# 1. Get how much the bone moved from its rest pose in the source
-			# 2. Apply that same movement to the target's rest pose
 			var src_rest: Quaternion = rest_map.get(node_name, src_node.quaternion)
 			var src_current: Quaternion = src_node.quaternion
 			var rot_delta: Quaternion = src_rest.inverse() * src_current
+			# Flip X axis to correct Mixamo→VRM coordinate mismatch
+			rot_delta = Quaternion(-rot_delta.x, rot_delta.y, rot_delta.z, rot_delta.w)
 			var tgt_rest: Quaternion = _target_skeleton.get_bone_rest(bone_idx).basis.get_rotation_quaternion()
 			_target_skeleton.set_bone_pose_rotation(bone_idx, tgt_rest * rot_delta)
 		else:
