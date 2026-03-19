@@ -25,6 +25,7 @@ var _hub_client: Node = null
 var _monitor_target := ""
 var _last_transcript := ""
 var _stt_connected := false
+var expecting_result := false  # flag so main.gd knows to skip display
 
 
 func setup(voice_pipeline: Node, hub_client: Node) -> void:
@@ -140,12 +141,17 @@ func _transcribe_capture() -> void:
 				"history": [],
 			},
 		})
+		expecting_result = true
 		print("[screen_listen] Sent %dKB to STT" % (audio_data.size() / 1024))
 	else:
 		print("[screen_listen] Hub not connected, skipping transcription")
 
 
 func _on_stt_transcript(text: String) -> void:
+	if not expecting_result:
+		return  # this STT result is from mic, not us
+	expecting_result = false
+
 	if text.is_empty() or text.begins_with("[STT error"):
 		return
 	if text == _last_transcript:

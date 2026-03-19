@@ -556,6 +556,10 @@ func _on_voice_state_changed(state: String) -> void:
 				chat_panel._sys_log.text = ""
 
 func _on_stt_result(text: String) -> void:
+	# Skip if this is a screen_listen result (not mic input)
+	if _screen_listen and _screen_listen.expecting_result:
+		return  # screen_listen handles this via its own signal
+
 	print("[main] STT result: '", text, "'")
 	if text.begins_with("[STT error"):
 		add_chat_message("System", text)
