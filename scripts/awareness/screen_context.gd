@@ -122,36 +122,34 @@ func _get_idle_time() -> int:
 func _get_audio_sources() -> Array:
 	"""Query PipeWire for apps actively playing audio. Returns [{app, title, binary}]."""
 	var output := []
-	# pw-dump gives full JSON of all PipeWire objects — parse for running playback streams
-	var exit = OS.execute("bash", ["-c",
-		"pw-dump 2>/dev/null | python3 -c \""
-		+ "import json,sys\\n"
-		+ "data=json.load(sys.stdin)\\n"
-		+ "for o in data:\\n"
-		+ "  p=o.get('info',{}).get('props',{})\\n"
-		+ "  mc=p.get('media.class','')\\n"
-		+ "  if 'Playback' in mc:\\n"
-		+ "    s=o.get('info',{}).get('state','')\\n"
-		+ "    if s=='running':\\n"
-		+ "      a=p.get('application.name','')\\n"
-		+ "      m=p.get('media.name','')\\n"
-		+ "      b=p.get('application.process.binary','')\\n"
-		+ "      if a and a not in ('plasmashell','pipewire','WirePlumber'):\\n"
-		+ "        print(a+'|'+m+'|'+b)\\n"
-		+ "\""
-	], output, true)
+	# Use pactl to list active sink inputs with their properties
+	var exit = OS.execute("pactl", ["list", "sink-inputs"], output, true)
 	var sources := []
-	if exit == 0 and output.size() > 0:
-		for line in output[0].strip_edges().split("\n"):
-			if line.is_empty():
-				continue
-			var parts = line.split("|")
-			if parts.size() >= 3:
-				sources.append({
-					"app": parts[0],
-					"title": parts[1],
-					"binary": parts[2],
-				})
+	if exit != 0 or output.is_empty():
+		return sources
+
+	# Parse pactl output — blocks separated by "Sink Input #N"
+	var text: String = output[0]
+	var blocks = text.split("Sink Input #")
+	for block in blocks:
+		if block.strip_edges().is_empty():
+			continue
+		var app := ""
+		var media := ""
+		var binary := ""
+		var state := ""
+		for line in block.split("\n"):
+			var l = line.strip_edges()
+			if l.begins_with("State: "):
+				state = l.substr(7)
+			elif l.begins_with("application.name = "):
+				app = l.substr(19).trim_prefix("\"").trim_suffix("\"")
+			elif l.begins_with("media.name = "):
+				media = l.substr(13).trim_prefix("\"").trim_suffix("\"")
+			elif l.begins_with("application.process.binary = "):
+				binary = l.substr(28).trim_prefix("\"").trim_suffix("\"")
+		if state == "RUNNING" and app != "" and app not in ["plasmashell", "pipewire", "WirePlumber"]:
+			sources.append({"app": app, "title": media, "binary": binary})
 	return sources
 
 
