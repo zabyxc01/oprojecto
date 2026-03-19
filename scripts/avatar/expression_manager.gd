@@ -1,24 +1,45 @@
 extends Node
 class_name ExpressionManager
 
-## Three-layer expression orchestrator (inspired by three-vrm override pattern).
+## Four-layer expression orchestrator with animation priority queue.
 ##
-## Every frame, three layers are evaluated in order:
-##   1. Body animation — skeleton poses from VRMA clips (emotion + idle)
-##   2. Facial expression — blend shapes with intensity (primary + secondary)
-##   3. Procedural overlays — blink, lip sync, eye tracking
+## Animation priorities (higher number = higher priority):
+##   POSITIONAL (0): IdleBreathing, Walking, Sitting, LayingDown — base layer, loops
+##   BEHAVIOR (1): idle cycling (LookAround, Relax, Thinking) — timed, from behavior tree
+##   EMOTION (2): happy, sad, angry etc — from LLM, returns to positional when done
+##   USER (3): manual F3 selection — highest priority, plays until changed
 ##
-## Override system: each emotion declares what it suppresses:
-##   - override_mouth: attenuate lip sync (e.g. big smile → less mouth movement)
-##   - override_blink: suppress auto-blink (e.g. surprise → eyes wide)
-##   - override_look_at: suppress eye tracking (e.g. sleepy → half-closed)
+## Layers evaluated every frame:
+##   1. Body animation (positional base + emotion/behavior overlay)
+##   2. Facial expression (blend shapes with intensity)
+##   3. Procedural overlays (blink, lip sync, eye tracking)
 
 signal emotion_applied(emotion: String, intensity: float)
+signal positional_changed(anim_name: String)
 
 var _expressions: AvatarExpressions
 var _animation: AvatarAnimation
 var _lipsync: LipSync
 var _is_speaking := false
+
+# ── Animation Priority System ────────────────────────────────────────────────
+enum AnimPriority { POSITIONAL = 0, BEHAVIOR = 1, EMOTION = 2, USER = 3 }
+
+var _current_anim := ""
+var _current_priority := -1
+var _anim_remaining := 0.0  # seconds left for current non-positional anim
+var _positional_anim := "LookAround"  # base animation to return to
+var _anim_queue: Array = []  # [{name: String, priority: int, duration: float}]
+
+# Physics state → positional animation mapping
+const PHYSICS_ANIM_MAP := {
+	"standing": "LookAround",   # TODO: replace with IdleBreathing when available
+	"walking": "LookAround",    # TODO: replace with Walking when available
+	"sitting": "Relax",         # TODO: replace with Sitting when available
+	"sleeping": "Sleepy",       # TODO: replace with LayingDown when available
+	"falling": "Surprised",
+	"dragged": "Surprised",
+}
 
 # Emotion → animation clip mapping
 const EMOTION_ANIM_MAP := {
@@ -39,9 +60,6 @@ const EMOTION_ANIM_MAP := {
 }
 
 # Override declarations per emotion
-# override_mouth: 0.0 = no suppression, 1.0 = full suppression of lip sync
-# override_blink: true = suppress auto-blink (eyes stay as expression dictates)
-# override_look_at: true = suppress eye tracking
 const EMOTION_OVERRIDES := {
 	"happy":     {"override_mouth": 0.5, "override_blink": false, "override_look_at": false},
 	"angry":     {"override_mouth": 0.4, "override_blink": false, "override_look_at": false},
@@ -64,33 +82,20 @@ var _mouth_suppression := 0.0
 var _blink_suppressed := false
 var _look_at_suppressed := false
 
-# Idle animation
-var _idle_anim := "LookAround"
-var _idle_timer := 0.0
-var _idle_interval := 8.0  # seconds between idle animation changes
-var _in_emotion_anim := false
-var _emotion_anim_timer := 0.0
-var _emotion_anim_duration := 4.0
-
 
 func setup(expressions: AvatarExpressions, animation: AvatarAnimation, lipsync: LipSync) -> void:
 	_expressions = expressions
 	_animation = animation
 	_lipsync = lipsync
 
-	# Start idle animation
-	if _animation and _animation.has_animation(_idle_anim):
-		_animation.play(_idle_anim)
+	# Start with positional animation
+	_play_anim(_positional_anim)
 
+
+# ── Public API ───────────────────────────────────────────────────────────────
 
 func set_emotion(emotion_data: Dictionary) -> void:
-	"""Accept full emotion payload from server.
-
-	emotion_data format:
-	  {primary: "happy", primary_intensity: 0.8,
-	   secondary: "curious", secondary_intensity: 0.3}
-	Or legacy string format is handled by the caller.
-	"""
+	"""Accept full emotion payload from LLM response."""
 	var primary: String = emotion_data.get("primary", "neutral")
 	var intensity: float = emotion_data.get("primary_intensity", 0.7)
 	var secondary: String = emotion_data.get("secondary", "")
@@ -104,13 +109,50 @@ func set_emotion(emotion_data: Dictionary) -> void:
 	if secondary:
 		_expressions.set_secondary(secondary, secondary_intensity)
 
-	# Layer 1: body animation
-	_play_emotion_animation(primary, intensity)
+	# Layer 1: body animation (emotion priority)
+	if primary != "neutral" and intensity >= 0.2:
+		var anim_name: String = EMOTION_ANIM_MAP.get(primary, "")
+		if anim_name:
+			var duration = 3.0 + intensity * 3.0
+			request_animation(anim_name, AnimPriority.EMOTION, duration)
 
 	# Calculate overrides
 	_apply_overrides(primary, intensity)
-
 	emotion_applied.emit(primary, intensity)
+
+
+func request_animation(anim_name: String, priority: int, duration: float = 4.0) -> bool:
+	"""Request an animation with priority. Returns true if played immediately."""
+	if not _animation or not _animation.has_animation(anim_name):
+		return false
+
+	if priority >= _current_priority:
+		# Play immediately — higher or equal priority
+		_play_anim(anim_name)
+		_current_priority = priority
+		_anim_remaining = duration if priority > AnimPriority.POSITIONAL else 0.0
+		print("[expr_mgr] Playing: %s (pri %d, %.1fs)" % [anim_name, priority, duration])
+		return true
+	else:
+		# Queue it — lower priority, play when current finishes
+		_anim_queue.append({"name": anim_name, "priority": priority, "duration": duration})
+		return false
+
+
+func set_positional(physics_state: String) -> void:
+	"""Set the base positional animation based on desktop physics state."""
+	var anim_name: String = PHYSICS_ANIM_MAP.get(physics_state, "LookAround")
+	if anim_name == _positional_anim:
+		return
+
+	_positional_anim = anim_name
+	positional_changed.emit(anim_name)
+
+	# If nothing higher-priority is playing, switch immediately
+	if _current_priority <= AnimPriority.POSITIONAL:
+		_play_anim(anim_name)
+		_current_priority = AnimPriority.POSITIONAL
+		print("[expr_mgr] Positional: %s" % anim_name)
 
 
 func set_speaking(speaking: bool) -> void:
@@ -121,41 +163,7 @@ func is_look_at_suppressed() -> bool:
 	return _look_at_suppressed
 
 
-func _play_emotion_animation(emotion: String, intensity: float) -> void:
-	if not _animation:
-		return
-
-	if emotion == "neutral" or intensity < 0.2:
-		# Return to idle
-		if _in_emotion_anim:
-			_in_emotion_anim = false
-			_animation.play(_idle_anim)
-		return
-
-	var anim_name: String = EMOTION_ANIM_MAP.get(emotion, "")
-	if anim_name and _animation.has_animation(anim_name):
-		_animation.play(anim_name)
-		_in_emotion_anim = true
-		_emotion_anim_timer = 0.0
-		# Longer animations for stronger emotions
-		_emotion_anim_duration = 3.0 + intensity * 3.0
-
-
-func _apply_overrides(emotion: String, intensity: float) -> void:
-	var overrides: Dictionary = EMOTION_OVERRIDES.get(emotion, {})
-
-	# Scale mouth suppression by intensity
-	var base_mouth: float = overrides.get("override_mouth", 0.0)
-	_mouth_suppression = base_mouth * intensity
-
-	# Bool overrides only apply above intensity threshold
-	_blink_suppressed = overrides.get("override_blink", false) and intensity > 0.4
-	_look_at_suppressed = overrides.get("override_look_at", false) and intensity > 0.3
-
-	# Tell expression system about blink override
-	if _expressions:
-		_expressions.set_blink_enabled(not _blink_suppressed)
-
+# ── Update Loop ──────────────────────────────────────────────────────────────
 
 func update(delta: float) -> void:
 	if not _expressions:
@@ -168,20 +176,49 @@ func update(delta: float) -> void:
 	if _animation:
 		_animation.update(delta)
 
-		# Return to idle after emotion animation duration
-		if _in_emotion_anim:
-			_emotion_anim_timer += delta
-			if _emotion_anim_timer >= _emotion_anim_duration:
-				_in_emotion_anim = false
-				_animation.play(_idle_anim)
-
-		# Cycle idle animations occasionally
-		if not _in_emotion_anim:
-			_idle_timer += delta
-			if _idle_timer >= _idle_interval:
-				_idle_timer = 0.0
-				_idle_interval = 6.0 + randf() * 6.0
+		# Track animation duration (non-positional only)
+		if _anim_remaining > 0.0:
+			_anim_remaining -= delta
+			if _anim_remaining <= 0.0:
+				# Current animation expired — check queue or return to positional
+				_anim_remaining = 0.0
+				_advance_queue()
 
 	# Layer 3: procedural overlays (lip sync with mouth suppression)
 	if _lipsync:
 		_lipsync.update(delta, _is_speaking, _mouth_suppression)
+
+
+# ── Internal ─────────────────────────────────────────────────────────────────
+
+func _advance_queue() -> void:
+	"""Pop next animation from queue, or return to positional base."""
+	if _anim_queue.size() > 0:
+		# Sort by priority (highest first)
+		_anim_queue.sort_custom(func(a, b): return a["priority"] > b["priority"])
+		var next = _anim_queue.pop_front()
+		_play_anim(next["name"])
+		_current_priority = next["priority"]
+		_anim_remaining = next["duration"]
+		print("[expr_mgr] Queue -> %s (pri %d)" % [next["name"], next["priority"]])
+	else:
+		# Return to positional base
+		_play_anim(_positional_anim)
+		_current_priority = AnimPriority.POSITIONAL
+		print("[expr_mgr] Returning to positional: %s" % _positional_anim)
+
+
+func _play_anim(anim_name: String) -> void:
+	if _animation and _animation.has_animation(anim_name) and _current_anim != anim_name:
+		_animation.play(anim_name)
+		_current_anim = anim_name
+
+
+func _apply_overrides(emotion: String, intensity: float) -> void:
+	var overrides: Dictionary = EMOTION_OVERRIDES.get(emotion, {})
+	var base_mouth: float = overrides.get("override_mouth", 0.0)
+	_mouth_suppression = base_mouth * intensity
+	_blink_suppressed = overrides.get("override_blink", false) and intensity > 0.4
+	_look_at_suppressed = overrides.get("override_look_at", false) and intensity > 0.3
+	if _expressions:
+		_expressions.set_blink_enabled(not _blink_suppressed)

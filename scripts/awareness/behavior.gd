@@ -143,9 +143,12 @@ func _update_idle(delta: float) -> void:
 		_maybe_initiate()
 
 
+var _sleep_anim_emitted := false
+
 func _update_sleeping(_delta: float) -> void:
 	# Just sleep. Wake on user interaction (handled in on_user_interaction).
-	if _state_timer < 1.0:
+	if not _sleep_anim_emitted:
+		_sleep_anim_emitted = true
 		wants_animation.emit("Sleepy")
 
 
@@ -212,6 +215,7 @@ func _maybe_initiate() -> void:
 
 
 func _transition(new_state: State) -> void:
+	_sleep_anim_emitted = false
 	if new_state == current_state:
 		return
 	var old_name = get_state_name()

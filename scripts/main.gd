@@ -194,6 +194,10 @@ func _ready() -> void:
 	_desktop_physics.drag_started.connect(_on_physics_drag_started)
 	_desktop_physics.drag_ended.connect(_on_physics_drag_ended)
 	_desktop_physics.walking.connect(_on_physics_walking)
+	_desktop_physics.state_changed.connect(func(new_state):
+		if _expr_manager:
+			_expr_manager.set_positional(new_state)
+	)
 
 	# ── Screen listener (system audio capture for content awareness) ──
 	_screen_listen = preload("res://scripts/awareness/screen_listen.gd").new()
@@ -607,9 +611,9 @@ func _on_emotion_faded() -> void:
 	pass
 
 func _on_behavior_animation(anim_name: String) -> void:
-	"""Behavior tree requests an animation."""
-	if _expr_manager and anim_system and anim_system.has_animation(anim_name):
-		anim_system.play(anim_name)
+	"""Behavior tree requests an animation — routed through priority queue."""
+	if _expr_manager:
+		_expr_manager.request_animation(anim_name, ExpressionManager.AnimPriority.BEHAVIOR, 5.0)
 
 func _on_physics_fell() -> void:
 	"""Avatar fell and landed on the taskbar — play surprised reaction."""
