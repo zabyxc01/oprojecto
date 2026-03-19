@@ -349,8 +349,8 @@ func update(delta: float) -> void:
 			# Apply only the animated delta from the source's rest.
 			var src_rest: Quaternion = rest_map.get(node_name, Quaternion.IDENTITY)
 			var src_current: Quaternion = src_node.quaternion
-			var delta: Quaternion = src_rest.inverse() * src_current
-			_target_skeleton.set_bone_pose_rotation(bone_idx, delta)
+			var rot_delta: Quaternion = src_rest.inverse() * src_current
+			_target_skeleton.set_bone_pose_rotation(bone_idx, rot_delta)
 		else:
 			# VRM native clips: direct quaternion copy (same skeleton convention)
 			_target_skeleton.set_bone_pose_rotation(bone_idx, src_node.quaternion)
