@@ -196,13 +196,6 @@ func _load_clip(path: String, anim_name: String) -> void:
 		"bone_map": {},
 	}
 
-	# Debug: print first 5 node names to see what Godot gives us
-	var _dbg_count := 0
-	for _dbg_name in node_map:
-		if _dbg_count < 5:
-			print("[anim] Node: '", _dbg_name, "'")
-			_dbg_count += 1
-
 	var anims = player.get_animation_list()
 	if anims.size() > 0:
 		player.play(anims[0])
@@ -254,36 +247,37 @@ func setup(model: Node3D) -> void:
 		print("[anim] ", clip_name, ": ", matched, " body bones matched")
 
 func set_bone_mapping(mapping: Dictionary) -> void:
-	"""Apply a model_mapper bone mapping — overrides the hardcoded HUMANOID_TO_JBIP table.
+	"""Apply a model_mapper bone mapping — supplements existing mappings.
 	mapping keys are humanoid canonical names (hips, spine, etc.),
-	values are actual bone names in the model's skeleton."""
+	values are actual bone names in the model's skeleton.
+	Only re-maps clips that had poor initial matching (< 10 bones)."""
 	if not _target_skeleton:
 		return
-	# Re-map all loaded clips using the new mapping
 	for clip_name in _clips:
 		var clip = _clips[clip_name]
+		var existing_map: Dictionary = clip["bone_map"]
+
+		# Skip clips that already matched well (Mixamo→J_Bip worked)
+		if existing_map.size() >= 10:
+			print("[anim] Keeping existing mapping for ", clip_name, ": ", existing_map.size(), " bones")
+			continue
+
+		# Re-map poorly matched clips using model_mapper data
 		var node_map: Dictionary = clip["node_map"]
 		var bone_map := {}
 		var matched := 0
 
 		for node_name in node_map:
-			# Try direct match (bone name matches node name)
 			var bone_idx = _target_skeleton.find_bone(node_name)
 
-			# Try humanoid → mapped actual name
+			if bone_idx < 0 and node_name in MIXAMO_TO_JBIP:
+				bone_idx = _target_skeleton.find_bone(MIXAMO_TO_JBIP[node_name])
+
 			if bone_idx < 0 and node_name in mapping:
 				bone_idx = _target_skeleton.find_bone(mapping[node_name])
 
-			# Try via HUMANOID_TO_JBIP as fallback
 			if bone_idx < 0 and node_name in HUMANOID_TO_JBIP:
 				bone_idx = _target_skeleton.find_bone(HUMANOID_TO_JBIP[node_name])
-
-			# Try reverse: node uses humanoid name, mapping gives actual
-			if bone_idx < 0:
-				for humanoid_name in mapping:
-					if node_name == humanoid_name or node_name == mapping[humanoid_name]:
-						bone_idx = _target_skeleton.find_bone(mapping[humanoid_name])
-						break
 
 			if bone_idx >= 0:
 				bone_map[node_name] = bone_idx
