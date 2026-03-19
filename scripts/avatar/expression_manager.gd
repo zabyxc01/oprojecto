@@ -33,29 +33,29 @@ var _anim_queue: Array = []  # [{name: String, priority: int, duration: float}]
 
 # Physics state → positional animation mapping
 const PHYSICS_ANIM_MAP := {
-	"standing": "BreathingIdle",
-	"walking": "FemaleWalk",
-	"sitting": "FemaleSittingPose",
-	"sleeping": "LayingSleeping",
-	"falling": "Surprised",
-	"dragged": "Surprised",
+	"standing": "idle",
+	"walking": "walking",
+	"sitting": "idle",
+	"sleeping": "idle",
+	"falling": "jump",
+	"dragged": "idle",
 }
 
-# Emotion → animation clip mapping
+# Emotion → animation clip mapping (using available locomotion pack)
 const EMOTION_ANIM_MAP := {
-	"happy": "Happy",
-	"angry": "StandingArguing",
-	"sad": "Crying",
-	"surprised": "Surprised",
-	"relaxed": "Relax",
-	"blush": "Bashful",
-	"shy": "Bashful",
-	"sleepy": "Yawn",
-	"thinking": "Thinking",
-	"curious": "LookAround",
-	"bored": "Idle",
-	"serious": "Talking",
-	"love": "BlowAKiss",
+	"happy": "jump",
+	"angry": "running",
+	"sad": "idle",
+	"surprised": "jump",
+	"relaxed": "idle",
+	"blush": "idle",
+	"shy": "idle",
+	"sleepy": "idle",
+	"thinking": "idle",
+	"curious": "left_turn",
+	"bored": "idle",
+	"serious": "idle",
+	"love": "idle",
 	"neutral": "",
 }
 
