@@ -20,7 +20,10 @@ var _ambient_llm: Node = null
 var _persistent_state: Node = null
 var _desktop_physics: Node = null
 var _screen_listen: Node = null
+var _screen_capture: Node = null
 var _engagement_mode: Node = null
+var _last_screenshot := ""
+var _last_audio_transcript := ""
 var hub_client: HubClient = null
 var connection_manager: ConnectionManager = null
 var config: Node = null
@@ -218,6 +221,11 @@ func _ready() -> void:
 	_screen_listen.setup(voice_pipeline, hub_client)
 	_screen_listen.transcript_ready.connect(_on_screen_transcript)
 
+	# ── Screen capture (screenshots for Live mode vision) ─────────
+	_screen_capture = preload("res://scripts/awareness/screen_capture.gd").new()
+	add_child(_screen_capture)
+	_screen_capture.screenshot_ready.connect(_on_screenshot_ready)
+
 	# ── Model mapper (format-agnostic bone/blend shape mapping) ───────
 	# Deferred — model_mapper.gd has strict type issues in Godot 4.6, load safely
 	var _mapper_script = load("res://scripts/avatar/model_mapper.gd")
@@ -258,6 +266,8 @@ func _process(delta: float) -> void:
 		_desktop_physics.update(delta)
 	if _screen_listen:
 		_screen_listen.update(delta)
+	if _screen_capture:
+		_screen_capture.update(delta)
 	# ExpressionManager handles all three layers: animation, expressions, lip sync
 	if _expr_manager:
 		var speaking = voice_pipeline and voice_pipeline.current_state == voice_pipeline.PipelineState.SPEAKING
@@ -660,14 +670,25 @@ func _on_physics_walking(direction: int) -> void:
 	pass
 
 func _on_screen_transcript(text: String, source: String) -> void:
-	"""System audio was transcribed — feed to ambient LLM as content context."""
+	"""System audio was transcribed — store for live queries or send directly."""
+	_last_audio_transcript = text
+
+	# In Live mode, transcripts feed into combined live queries (vision + audio)
+	if _engagement_mode and _engagement_mode.get_mode_name() == "live":
+		# Live mode: try combined query with latest screenshot
+		if _ambient_llm and _screen_context:
+			_ambient_llm.request_live_query(_screen_context.get_current(), _last_screenshot, text)
+			_last_screenshot = ""  # consume screenshot
+			_last_audio_transcript = ""
+		return
+
+	# In Aware mode, send as standalone content observation
 	if not _ambient_llm or not _screen_context:
 		return
 	var ctx = _screen_context.get_current()
 	var bg = ctx.get("background_media", "")
 	var window = ctx.get("window_title", "")
 
-	# Build a content-aware prompt — she knows this is what's playing, not what the user said
 	var prompt = (
 		"You just heard some of what the user is watching/listening to. "
 		+ "This is NOT the user talking to you — this is audio from their screen content. "
@@ -676,11 +697,23 @@ func _on_screen_transcript(text: String, source: String) -> void:
 		prompt += "They are %s. " % bg
 	elif "youtube" in window.to_lower() or "twitch" in window.to_lower():
 		prompt += "They're watching something in %s. " % window.substr(0, 60)
-
 	prompt += 'Here\'s what was said in the content: "%s" ' % text.substr(0, 300)
 	prompt += "React to this naturally — comment on what they're watching, not what they said to you. Keep it brief."
-
 	_ambient_llm.request_query(prompt, "comment", ctx)
+
+
+func _on_screenshot_ready(image_b64: String) -> void:
+	"""Screenshot captured — store for live query or send immediately."""
+	_last_screenshot = image_b64
+
+	# In Live mode, try combined query with latest audio
+	if _engagement_mode and _engagement_mode.get_mode_name() == "live":
+		if _ambient_llm and _screen_context:
+			_ambient_llm.request_live_query(
+				_screen_context.get_current(), image_b64, _last_audio_transcript
+			)
+			_last_audio_transcript = ""  # consume transcript
+			_last_screenshot = ""
 
 # ── Toolbar handlers ─────────────────────────────────────────────────────────
 var _voice_enabled := true
@@ -709,12 +742,14 @@ func _on_engagement_mode_changed(mode: String) -> void:
 
 	match mode:
 		"chat_only":
-			if _screen_context: _screen_context.poll_interval = 999.0  # effectively disable
+			if _screen_context: _screen_context.poll_interval = 999.0
 			if _screen_listen: _screen_listen.set_enabled(false)
+			if _screen_capture: _screen_capture.set_enabled(false)
 			if _ambient_llm: _ambient_llm.min_interval = 99999.0
 			if _behavior: _behavior.INITIATE_CHANCE = 0.0
 			add_chat_message("System", "Chat Only mode")
 		"aware":
+			if _screen_capture: _screen_capture.set_enabled(false)
 			if _screen_context: _screen_context.poll_interval = 5.0
 			if _ambient_llm: _ambient_llm.min_interval = 120.0
 			if _behavior: _behavior.INITIATE_CHANCE = 0.15
@@ -725,6 +760,7 @@ func _on_engagement_mode_changed(mode: String) -> void:
 				_screen_listen.set_enabled(true)
 				_screen_listen.capture_duration = 10.0
 				_screen_listen.capture_interval = 12.0
+			if _screen_capture: _screen_capture.set_enabled(true)
 			if _ambient_llm: _ambient_llm.min_interval = 15.0
 			if _behavior: _behavior.INITIATE_CHANCE = 0.5
 			add_chat_message("System", "Live mode \u2014 vision + audio active")
