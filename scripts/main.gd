@@ -649,7 +649,7 @@ func _on_emotion_faded() -> void:
 func _on_behavior_animation(anim_name: String) -> void:
 	"""Behavior tree requests an animation — routed through priority queue."""
 	if _expr_manager:
-		_expr_manager.request_animation(anim_name, ExpressionManager.AnimPriority.BEHAVIOR, 5.0)
+		_expr_manager.request_animation(anim_name, 1, 5.0)  # 1 = BEHAVIOR priority
 
 func _on_physics_fell() -> void:
 	"""Avatar fell and landed on the taskbar — play surprised reaction."""
