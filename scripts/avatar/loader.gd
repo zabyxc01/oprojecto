@@ -41,24 +41,43 @@ func _load_gltf(path: String) -> void:
 		model_failed.emit("Failed to generate scene from GLTF")
 
 func _load_vrm(path: String) -> void:
-	# VRM is GLTF with extensions — godot-vrm addon handles the VRM-specific data
-	# Without the addon, we can still load it as a GLTF (loses VRM metadata)
 	var gltf := GLTFDocument.new()
 	var state := GLTFState.new()
 
+	# Register material extensions only — they don't rename/rotate bones
+	# VRMC_vrm is NOT registered because it runs perform_retarget() which
+	# renames bones (J_Bip_* → Hips/Spine/etc.) and changes rest poses,
+	# breaking all animation bone mapping. VRMC_vrm_animation is a stub.
+	var exts: Array[GLTFDocumentExtension] = []
+	for ext_path in [
+		"res://addons/vrm/1.0/VRMC_materials_hdr_emissiveMultiplier.gd",
+		"res://addons/vrm/1.0/VRMC_materials_mtoon.gd",
+	]:
+		var script = load(ext_path)
+		if script:
+			var inst: GLTFDocumentExtension = script.new()
+			GLTFDocument.register_gltf_document_extension(inst)
+			exts.append(inst)
+
 	var err := gltf.append_from_file(path, state)
 	if err != OK:
-		# VRM might need the addon registered
-		print("[loader] VRM load as GLTF failed, addon may be needed: ", err)
-		model_failed.emit("VRM load failed — install godot-vrm addon")
+		print("[loader] VRM load failed: ", err)
+		_unregister_exts(exts)
+		model_failed.emit("VRM load failed: " + str(err))
 		return
 
 	var scene := gltf.generate_scene(state)
+	_unregister_exts(exts)
+
 	if scene:
-		print("[loader] VRM loaded as GLTF (install godot-vrm for full VRM support)")
+		print("[loader] VRM loaded (materials active, bones in original space)")
 		model_loaded.emit(scene)
 	else:
 		model_failed.emit("Failed to generate scene from VRM")
+
+func _unregister_exts(exts: Array[GLTFDocumentExtension]) -> void:
+	for ext in exts:
+		GLTFDocument.unregister_gltf_document_extension(ext)
 
 # Scan a directory for loadable models
 static func scan_models(dir_path: String) -> PackedStringArray:

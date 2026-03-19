@@ -1,14 +1,17 @@
 extends Node
 class_name AvatarAnimation
 
-# VRMA animation player — loads VRMA/GLB animations and applies bone transforms
+# VRMA animation player — loads VRMA animations and applies bone transforms
 # to the target VRM skeleton.
+#
+# All animations must be proper VRMA format (VRM humanoid bone names,
+# identity source rest). Raw Mixamo files won't work — convert them first.
 #
 # VRMA files import as Node3D hierarchies (not Skeleton3D), so we read
 # Node3D transforms from the animated source tree and map them to
 # skeleton bone poses on the target model by matching node names to bone names.
 #
-# Only body bones (J_Bip_*) are animated. Hair, face, eyes, secondary bones
+# Only body bones are animated. Hair, face, eyes, secondary bones
 # are left alone so spring bone physics and expressions still work.
 
 signal animation_loaded(anim_name: String)
@@ -16,11 +19,11 @@ signal animation_loaded(anim_name: String)
 var _clips := {}  # name → { scene, player, node_map, bone_map }
 var _current_clip := ""
 var _target_skeleton: Skeleton3D = null
+var debug_anim := false  # toggle: $Animation.debug_anim = true/false
 
 const ANIMATIONS_DIR := "res://assets/animations"
 
 # VRM humanoid bone name → J_Bip_* skeleton bone name mapping
-# Used to translate generic VRMA clips to model-specific bone names
 const HUMANOID_TO_JBIP := {
 	"hips": "J_Bip_C_Hips", "spine": "J_Bip_C_Spine", "chest": "J_Bip_C_Chest",
 	"upperChest": "J_Bip_C_UpperChest", "neck": "J_Bip_C_Neck", "head": "J_Bip_C_Head",
@@ -85,68 +88,10 @@ const HUMANOID_TO_JBIP := {
 	"RightLittleDistal": "J_Bip_R_Little3",
 }
 
-# Mixamo bone name → VRM J_Bip bone name mapping
-const MIXAMO_TO_JBIP := {
-	"mixamorig_Hips": "J_Bip_C_Hips",
-	"mixamorig_Spine": "J_Bip_C_Spine",
-	"mixamorig_Spine1": "J_Bip_C_Chest",
-	"mixamorig_Spine2": "J_Bip_C_UpperChest",
-	"mixamorig_Neck": "J_Bip_C_Neck",
-	"mixamorig_Head": "J_Bip_C_Head",
-	"mixamorig_LeftShoulder": "J_Bip_L_Shoulder",
-	"mixamorig_LeftArm": "J_Bip_L_UpperArm",
-	"mixamorig_LeftForeArm": "J_Bip_L_LowerArm",
-	"mixamorig_LeftHand": "J_Bip_L_Hand",
-	"mixamorig_RightShoulder": "J_Bip_R_Shoulder",
-	"mixamorig_RightArm": "J_Bip_R_UpperArm",
-	"mixamorig_RightForeArm": "J_Bip_R_LowerArm",
-	"mixamorig_RightHand": "J_Bip_R_Hand",
-	"mixamorig_LeftUpLeg": "J_Bip_L_UpperLeg",
-	"mixamorig_LeftLeg": "J_Bip_L_LowerLeg",
-	"mixamorig_LeftFoot": "J_Bip_L_Foot",
-	"mixamorig_LeftToeBase": "J_Bip_L_ToeBase",
-	"mixamorig_RightUpLeg": "J_Bip_R_UpperLeg",
-	"mixamorig_RightLeg": "J_Bip_R_LowerLeg",
-	"mixamorig_RightFoot": "J_Bip_R_Foot",
-	"mixamorig_RightToeBase": "J_Bip_R_ToeBase",
-	"mixamorig_LeftHandThumb1": "J_Bip_L_Thumb1",
-	"mixamorig_LeftHandThumb2": "J_Bip_L_Thumb2",
-	"mixamorig_LeftHandThumb3": "J_Bip_L_Thumb3",
-	"mixamorig_LeftHandIndex1": "J_Bip_L_Index1",
-	"mixamorig_LeftHandIndex2": "J_Bip_L_Index2",
-	"mixamorig_LeftHandIndex3": "J_Bip_L_Index3",
-	"mixamorig_LeftHandMiddle1": "J_Bip_L_Middle1",
-	"mixamorig_LeftHandMiddle2": "J_Bip_L_Middle2",
-	"mixamorig_LeftHandMiddle3": "J_Bip_L_Middle3",
-	"mixamorig_LeftHandRing1": "J_Bip_L_Ring1",
-	"mixamorig_LeftHandRing2": "J_Bip_L_Ring2",
-	"mixamorig_LeftHandRing3": "J_Bip_L_Ring3",
-	"mixamorig_LeftHandPinky1": "J_Bip_L_Little1",
-	"mixamorig_LeftHandPinky2": "J_Bip_L_Little2",
-	"mixamorig_LeftHandPinky3": "J_Bip_L_Little3",
-	"mixamorig_RightHandThumb1": "J_Bip_R_Thumb1",
-	"mixamorig_RightHandThumb2": "J_Bip_R_Thumb2",
-	"mixamorig_RightHandThumb3": "J_Bip_R_Thumb3",
-	"mixamorig_RightHandIndex1": "J_Bip_R_Index1",
-	"mixamorig_RightHandIndex2": "J_Bip_R_Index2",
-	"mixamorig_RightHandIndex3": "J_Bip_R_Index3",
-	"mixamorig_RightHandMiddle1": "J_Bip_R_Middle1",
-	"mixamorig_RightHandMiddle2": "J_Bip_R_Middle2",
-	"mixamorig_RightHandMiddle3": "J_Bip_R_Middle3",
-	"mixamorig_RightHandRing1": "J_Bip_R_Ring1",
-	"mixamorig_RightHandRing2": "J_Bip_R_Ring2",
-	"mixamorig_RightHandRing3": "J_Bip_R_Ring3",
-	"mixamorig_RightHandPinky1": "J_Bip_R_Little1",
-	"mixamorig_RightHandPinky2": "J_Bip_R_Little2",
-	"mixamorig_RightHandPinky3": "J_Bip_R_Little3",
-}
-
 # Only animate body bones — skip hair, face, eyes, secondary/physics bones
 func _is_body_bone(bone_name: String) -> bool:
 	if bone_name.begins_with("J_Bip_"):
 		return true
-	if bone_name.begins_with("mixamorig_"):
-		return bone_name in MIXAMO_TO_JBIP
 	return bone_name in HUMANOID_TO_JBIP
 
 func load_all_animations() -> void:
@@ -189,26 +134,17 @@ func _load_clip(path: String, anim_name: String) -> void:
 	scene.visible = false
 	add_child(scene)
 
-	# Stop any autoplay, reset to frame 0, capture actual rest pose
+	# Stop any autoplay, reset to frame 0
 	if player.is_playing():
 		player.stop()
 	player.seek(0, true)
-	# Force one process to apply frame 0 poses
 	player.advance(0)
-
-	# Capture actual rest quaternions from the source nodes at frame 0
-	var rest_map := {}
-	for nname in node_map:
-		var n: Node3D = node_map[nname]
-		rest_map[nname] = n.quaternion
 
 	_clips[anim_name] = {
 		"scene": scene,
 		"player": player,
 		"node_map": node_map,
 		"bone_map": {},
-		"rest_map": rest_map,
-		"is_mixamo": node_map.has("mixamorig_Hips"),
 	}
 
 	var anims = player.get_animation_list()
@@ -246,10 +182,6 @@ func setup(model: Node3D) -> void:
 			# Try direct match first (J_Bip_* names)
 			var bone_idx = _target_skeleton.find_bone(node_name)
 
-			# Try Mixamo → J_Bip translation
-			if bone_idx < 0 and node_name in MIXAMO_TO_JBIP:
-				bone_idx = _target_skeleton.find_bone(MIXAMO_TO_JBIP[node_name])
-
 			# Try humanoid → J_Bip translation
 			if bone_idx < 0 and node_name in HUMANOID_TO_JBIP:
 				bone_idx = _target_skeleton.find_bone(HUMANOID_TO_JBIP[node_name])
@@ -272,21 +204,16 @@ func set_bone_mapping(mapping: Dictionary) -> void:
 		var clip = _clips[clip_name]
 		var existing_map: Dictionary = clip["bone_map"]
 
-		# Skip clips that already matched well (Mixamo→J_Bip worked)
 		if existing_map.size() >= 10:
 			print("[anim] Keeping existing mapping for ", clip_name, ": ", existing_map.size(), " bones")
 			continue
 
-		# Re-map poorly matched clips using model_mapper data
 		var node_map: Dictionary = clip["node_map"]
 		var bone_map := {}
 		var matched := 0
 
 		for node_name in node_map:
 			var bone_idx = _target_skeleton.find_bone(node_name)
-
-			if bone_idx < 0 and node_name in MIXAMO_TO_JBIP:
-				bone_idx = _target_skeleton.find_bone(MIXAMO_TO_JBIP[node_name])
 
 			if bone_idx < 0 and node_name in mapping:
 				bone_idx = _target_skeleton.find_bone(mapping[node_name])
@@ -336,29 +263,17 @@ func update(delta: float) -> void:
 		if anims.size() > 0:
 			player.play(anims[0])
 
-	# Copy Node3D transforms → skeleton bone poses (body bones only)
-	var is_mixamo: bool = clip.get("is_mixamo", false)
-	var rest_map: Dictionary = clip.get("rest_map", {})
-
+	# VRMA animations: direct quaternion copy.
+	# Proper VRMA files have identity source rest and VRM-compatible bone orientations.
+	# In Godot 4, set_bone_pose_rotation IS the final local rotation (not delta from rest).
 	for node_name in bone_map:
 		var bone_idx: int = bone_map[node_name]
 		var src_node: Node3D = node_map[node_name]
 
-		if is_mixamo:
-			# Delta retargeting: Mixamo → VRM
-			var src_rest: Quaternion = rest_map.get(node_name, src_node.quaternion)
-			var src_current: Quaternion = src_node.quaternion
-			var rot_delta: Quaternion = src_rest.inverse() * src_current
-			# Flip X axis to correct Mixamo→VRM coordinate mismatch
-			rot_delta = Quaternion(-rot_delta.x, rot_delta.y, rot_delta.z, rot_delta.w)
-			var tgt_rest: Quaternion = _target_skeleton.get_bone_rest(bone_idx).basis.get_rotation_quaternion()
-			_target_skeleton.set_bone_pose_rotation(bone_idx, tgt_rest * rot_delta)
-		else:
-			# VRM native clips: direct quaternion copy (same skeleton convention)
-			_target_skeleton.set_bone_pose_rotation(bone_idx, src_node.quaternion)
+		_target_skeleton.set_bone_pose_rotation(bone_idx, src_node.quaternion)
 
-			if node_name.ends_with("Hips") or node_name == "hips" or node_name == "Hips":
-				_target_skeleton.set_bone_pose_position(bone_idx, src_node.position)
+		if node_name.ends_with("Hips") or node_name == "hips" or node_name == "Hips":
+			_target_skeleton.set_bone_pose_position(bone_idx, src_node.position)
 
 func has_animation(name: String) -> bool:
 	return name in _clips
