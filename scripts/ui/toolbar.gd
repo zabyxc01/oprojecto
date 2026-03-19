@@ -254,23 +254,37 @@ func _refresh_window_list() -> void:
 	_focus_selector.clear()
 	_focus_selector.add_item("Active Window", 0)
 
-	var output := []
-	# Get list of open windows with titles
-	var exit = OS.execute("bash", ["-c",
-		"xdotool search --onlyvisible --name '' getwindowname 2>/dev/null | sort -u | head -20"
-	], output, true)
+	# Get window IDs first, then query each name individually
+	var id_output := []
+	var exit = OS.execute("xdotool", ["search", "--onlyvisible", "--name", "."], id_output, true)
+	if exit != 0 or id_output.is_empty():
+		return
 
-	if exit == 0 and output.size() > 0:
-		var idx = 1
-		for line in output[0].strip_edges().split("\n"):
-			var title = line.strip_edges()
-			if title.is_empty() or title.length() < 3:
-				continue
-			# Truncate long titles
-			if title.length() > 50:
-				title = title.substr(0, 47) + "..."
-			_focus_selector.add_item(title, idx)
-			idx += 1
+	var seen := {}
+	var idx = 1
+	for wid in id_output[0].strip_edges().split("\n"):
+		if wid.strip_edges().is_empty():
+			continue
+		var name_output := []
+		OS.execute("xdotool", ["getwindowname", wid.strip_edges()], name_output, true)
+		if name_output.is_empty():
+			continue
+		var title = name_output[0].strip_edges()
+		if title.is_empty() or title.length() < 3:
+			continue
+		# Skip our own window and desktop
+		if title.begins_with("oprojecto") or "Plasma" in title:
+			continue
+		# Deduplicate
+		var short = title.substr(0, 50) if title.length() > 50 else title
+		if short in seen:
+			continue
+		seen[short] = true
+		# Truncate for display
+		if title.length() > 55:
+			title = title.substr(0, 52) + "..."
+		_focus_selector.add_item(title, idx)
+		idx += 1
 
 
 func _add_section_label(parent: Node, text: String) -> void:
