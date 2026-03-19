@@ -97,10 +97,10 @@ func _start_capture() -> void:
 	_capture_start = Time.get_ticks_msec()
 
 	# Use OS.create_process for non-blocking execution
-	# timeout captures for capture_duration seconds then exits
+	# pw-record defaults to float32 stereo — convert to 16kHz mono PCM WAV for STT
 	OS.create_process("bash", [
 		"-c",
-		"timeout %d pw-record --target %s %s 2>/dev/null" % [
+		"timeout %d pw-record --target %s --format s16 --rate 16000 --channels 1 %s 2>/dev/null" % [
 			int(capture_duration), _monitor_target, _capture_file
 		]
 	])
@@ -135,7 +135,7 @@ func _transcribe_capture() -> void:
 			"payload": {
 				"audio_b64": b64,
 				"format": "wav",
-				"sample_rate": 48000,
+				"sample_rate": 16000,
 				"auto_chat": false,
 				"history": [],
 			},
