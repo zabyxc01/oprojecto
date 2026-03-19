@@ -189,11 +189,16 @@ func _load_clip(path: String, anim_name: String) -> void:
 	scene.visible = false
 	add_child(scene)
 
+	# Stop any autoplay, reset to frame 0, capture rest pose
+	if player.is_playing():
+		player.stop()
+	player.seek(0, true)
+
 	# Capture rest pose quaternions BEFORE animation plays
 	var rest_map := {}  # node_name → rest Quaternion
 	for nname in node_map:
 		var n: Node3D = node_map[nname]
-		rest_map[nname] = n.quaternion
+		rest_map[nname] = Quaternion.IDENTITY  # Mixamo T-pose is identity
 
 	_clips[anim_name] = {
 		"scene": scene,
@@ -337,14 +342,15 @@ func update(delta: float) -> void:
 		var bone_idx: int = bone_map[node_name]
 		var src_node: Node3D = node_map[node_name]
 
-		if is_mixamo and node_name in rest_map:
-			# Delta retargeting: compute change from Mixamo rest pose,
-			# apply that change to VRM rest pose
-			var src_rest: Quaternion = rest_map[node_name]
+		if is_mixamo:
+			# Mixamo → VRM retargeting
+			# The fbx2vrma converter preserves Mixamo's bone orientations.
+			# VRM uses a different rest pose convention.
+			# Apply only the animated delta from the source's rest.
+			var src_rest: Quaternion = rest_map.get(node_name, Quaternion.IDENTITY)
 			var src_current: Quaternion = src_node.quaternion
 			var delta: Quaternion = src_rest.inverse() * src_current
-			var tgt_rest: Quaternion = _target_skeleton.get_bone_rest(bone_idx).basis.get_rotation_quaternion()
-			_target_skeleton.set_bone_pose_rotation(bone_idx, tgt_rest * delta)
+			_target_skeleton.set_bone_pose_rotation(bone_idx, delta)
 		else:
 			# VRM native clips: direct quaternion copy (same skeleton convention)
 			_target_skeleton.set_bone_pose_rotation(bone_idx, src_node.quaternion)
