@@ -48,17 +48,20 @@ func disconnect_from_hub() -> void:
 	_ws.close()
 	_is_connected = false
 
-func send_chat(text: String, history: Array) -> void:
+func send_chat(text: String, history: Array, context: String = "") -> void:
 	if not _is_connected:
 		return
+	var payload := {
+		"text": text,
+		"history": history,
+	}
+	if context != "":
+		payload["context"] = context
 	_send({
 		"type": "chat.request",
 		"id": _uuid(),
 		"ts": Time.get_unix_time_from_system(),
-		"payload": {
-			"text": text,
-			"history": history,
-		},
+		"payload": payload,
 	})
 
 func send_audio(audio_data: PackedByteArray, sample_rate: int = 44100, history: Array = []) -> void:

@@ -104,18 +104,18 @@ func request_query(prompt: String, query_type: String, context: Dictionary) -> b
 		return false
 
 	# ── Build and send ────────────────────────────────────────────────────
-	var full_prompt := _build_prompt(prompt, qt, context)
+	var system_context := _build_prompt(prompt, qt, context)
+	# Short user-facing trigger — this is what the LLM sees as the "user" message
+	var trigger := _build_trigger(qt, prompt)
 
 	_last_query_time = Time.get_unix_time_from_system()
 	_update_tracking(context)
 
-	# Send directly to hub as a chat request with the context as system framing.
-	# The full_prompt goes as the user message — but we DON'T display it in chat.
-	# The companion extension's system prompt + our context = Kira's natural response.
+	# Send to hub with context as system prompt extension, trigger as user message
 	if _hub_client and _hub_client._is_connected:
-		_hub_client.send_chat(full_prompt, [])
+		_hub_client.send_chat(trigger, [], system_context)
 	else:
-		_voice_pipeline.send_text(full_prompt)
+		_voice_pipeline.send_text(trigger)
 
 	query_sent.emit(_type_name(qt), _type_name(qt))
 	print("[ambient] Sent %s query" % _type_name(qt))
@@ -214,6 +214,24 @@ func _build_prompt(raw_prompt: String, qt: QueryType, context: Dictionary) -> St
 		parts.append("\n\nAdditional context: " + raw_prompt)
 
 	return "".join(parts)
+
+
+func _build_trigger(qt: QueryType, raw_prompt: String) -> String:
+	"""Build a short user-facing trigger message. This is what appears as the 'user' role."""
+	match qt:
+		QueryType.REACTION:
+			return "Something changed on screen. What do you think?"
+		QueryType.OBSERVATION:
+			return "What are your thoughts right now?"
+		QueryType.INITIATION:
+			return "Say something."
+		QueryType.GREETING:
+			return "Hey."
+		QueryType.COMMENT:
+			if raw_prompt.length() > 0 and raw_prompt.length() < 200:
+				return raw_prompt
+			return "Comment on what you notice."
+	return "React naturally."
 
 
 func _sanitize_title(title: String) -> String:
