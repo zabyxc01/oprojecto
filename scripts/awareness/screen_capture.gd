@@ -50,13 +50,17 @@ func _start_capture() -> void:
 	_cleanup_file()
 
 	_capturing = true
-	# Use OS.create_process to avoid blocking the main thread.
-	# `import` is from ImageMagick — captures the root window (full screen),
-	# resizes to 960x540 (good enough for vision models), JPEG quality 60.
-	_capture_pid = OS.create_process("import", [
-		"-window", "root",
-		"-resize", "960x540",
-		"-quality", "60",
+	# Use ffmpeg x11grab for non-interactive screenshot capture.
+	# Captures full screen, resizes to 960x540, JPEG quality 5 (good enough for vision).
+	_capture_pid = OS.create_process("ffmpeg", [
+		"-f", "x11grab",
+		"-video_size", "3440x1440",
+		"-i", ":0",
+		"-frames:v", "1",
+		"-vf", "scale=960:540",
+		"-q:v", "5",
+		"-update", "1",
+		"-y",
 		_capture_file,
 	])
 	print("[screen_capture] Capture started (pid=%d)" % _capture_pid)
