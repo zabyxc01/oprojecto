@@ -210,8 +210,7 @@ func add_message(sender: String, text: String) -> void:
 	label.bbcode_enabled = true
 	label.fit_content = true
 	label.scroll_active = false
-	label.custom_minimum_size = Vector2(0, 0)
-	label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	label.custom_minimum_size = Vector2(240, 0)
 	label.add_theme_font_size_override("normal_font_size", _config.chat_font_size)
 	if is_user:
 		label.add_theme_color_override("default_color", _config.chat_text_user_color)
