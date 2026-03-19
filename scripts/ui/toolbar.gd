@@ -13,6 +13,7 @@ signal voice_enabled_changed(enabled: bool)
 signal mic_enabled_changed(enabled: bool)
 signal attention_changed(mode: String)
 signal focus_window_changed(window_title: String)
+signal screen_listen_changed(enabled: bool)
 
 var model_selector: OptionButton
 var anim_selector: OptionButton
@@ -22,6 +23,7 @@ var _voice_toggle: CheckButton
 var _mic_toggle: CheckButton
 var _focus_selector: OptionButton
 var _focus_refresh_btn: Button
+var _screen_listen_toggle: CheckButton
 var _status_label: Label
 
 const MODELS_DIR := "/mnt/storage/staging/ai-models-animations/vrm-models/"
@@ -180,6 +182,16 @@ func build(config: Node) -> void:
 	_focus_refresh_btn.add_theme_stylebox_override("normal", refresh_style)
 	_focus_refresh_btn.pressed.connect(_refresh_window_list)
 	row_focus.add_child(_focus_refresh_btn)
+
+	# Screen listen toggle — captures system audio to understand content
+	var row_listen = HBoxContainer.new()
+	tb_vbox.add_child(row_listen)
+	_add_label(row_listen, "Listen to screen:")
+	_screen_listen_toggle = CheckButton.new()
+	_screen_listen_toggle.button_pressed = false
+	_screen_listen_toggle.mouse_filter = Control.MOUSE_FILTER_STOP
+	_screen_listen_toggle.toggled.connect(func(on): screen_listen_changed.emit(on))
+	row_listen.add_child(_screen_listen_toggle)
 
 	_add_separator(tb_vbox)
 

@@ -19,6 +19,7 @@ var _behavior: Node = null
 var _ambient_llm: Node = null
 var _persistent_state: Node = null
 var _desktop_physics: Node = null
+var _screen_listen: Node = null
 var hub_client: HubClient = null
 var connection_manager: ConnectionManager = null
 var config: Node = null
@@ -89,6 +90,11 @@ func _ready() -> void:
 	_toolbar.mic_enabled_changed.connect(_on_mic_toggle)
 	_toolbar.attention_changed.connect(_on_attention_changed)
 	_toolbar.focus_window_changed.connect(_on_focus_window_changed)
+	_toolbar.screen_listen_changed.connect(func(on):
+		if _screen_listen:
+			_screen_listen.set_enabled(on)
+			add_chat_message("System", "Screen listening " + ("enabled" if on else "disabled"))
+	)
 	_model_selector = _toolbar.model_selector
 	_anim_selector = _toolbar.anim_selector
 	add_child(_toolbar)
@@ -186,6 +192,12 @@ func _ready() -> void:
 	_desktop_physics.drag_ended.connect(_on_physics_drag_ended)
 	_desktop_physics.walking.connect(_on_physics_walking)
 
+	# ── Screen listener (system audio capture for content awareness) ──
+	_screen_listen = preload("res://scripts/awareness/screen_listen.gd").new()
+	add_child(_screen_listen)
+	_screen_listen.setup(voice_pipeline, hub_client)
+	_screen_listen.transcript_ready.connect(_on_screen_transcript)
+
 	# ── Model mapper (format-agnostic bone/blend shape mapping) ───────
 	# Deferred — model_mapper.gd has strict type issues in Godot 4.6, load safely
 	var _mapper_script = load("res://scripts/avatar/model_mapper.gd")
@@ -224,6 +236,8 @@ func _process(delta: float) -> void:
 		_persistent_state.update(delta)
 	if _desktop_physics:
 		_desktop_physics.update(delta)
+	if _screen_listen:
+		_screen_listen.update(delta)
 	# ExpressionManager handles all three layers: animation, expressions, lip sync
 	if _expr_manager:
 		var speaking = voice_pipeline and voice_pipeline.current_state == voice_pipeline.PipelineState.SPEAKING
@@ -607,6 +621,29 @@ func _on_physics_drag_ended() -> void:
 
 func _on_physics_walking(direction: int) -> void:
 	pass
+
+func _on_screen_transcript(text: String, source: String) -> void:
+	"""System audio was transcribed — feed to ambient LLM as content context."""
+	if not _ambient_llm or not _screen_context:
+		return
+	var ctx = _screen_context.get_current()
+	var bg = ctx.get("background_media", "")
+	var window = ctx.get("window_title", "")
+
+	# Build a content-aware prompt — she knows this is what's playing, not what the user said
+	var prompt = (
+		"You just heard some of what the user is watching/listening to. "
+		+ "This is NOT the user talking to you — this is audio from their screen content. "
+	)
+	if bg != "":
+		prompt += "They are %s. " % bg
+	elif "youtube" in window.to_lower() or "twitch" in window.to_lower():
+		prompt += "They're watching something in %s. " % window.substr(0, 60)
+
+	prompt += 'Here\'s what was said in the content: "%s" ' % text.substr(0, 300)
+	prompt += "React to this naturally — comment on what they're watching, not what they said to you. Keep it brief."
+
+	_ambient_llm.request_query(prompt, "comment", ctx)
 
 # ── Toolbar handlers ─────────────────────────────────────────────────────────
 var _voice_enabled := true
