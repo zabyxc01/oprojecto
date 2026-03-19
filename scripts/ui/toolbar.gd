@@ -11,19 +11,30 @@ signal width_changed(value: float)
 signal font_changed(value: float)
 signal voice_enabled_changed(enabled: bool)
 signal mic_enabled_changed(enabled: bool)
-signal attention_changed(mode: String)
+signal engagement_mode_changed(mode: String)
+signal screenshot_interval_changed(value: float)
+signal audio_interval_changed(value: float)
 signal focus_window_changed(window_title: String)
 signal screen_listen_changed(enabled: bool)
 
 var model_selector: OptionButton
 var anim_selector: OptionButton
 var tts_selector: OptionButton
-var _attention_selector: OptionButton
+var _engagement_selector: OptionButton
+var _aware_sub_selector: OptionButton
+var _aware_sub_row: HBoxContainer
 var _voice_toggle: CheckButton
 var _mic_toggle: CheckButton
 var _focus_selector: OptionButton
 var _focus_refresh_btn: Button
 var _screen_listen_toggle: CheckButton
+var _screen_listen_row: HBoxContainer
+var _screenshot_slider: HSlider
+var _screenshot_row: HBoxContainer
+var _screenshot_label: Label
+var _audio_slider: HSlider
+var _audio_row: HBoxContainer
+var _audio_label: Label
 var _status_label: Label
 
 const MODELS_DIR := "/mnt/storage/staging/ai-models-animations/vrm-models/"
@@ -136,22 +147,81 @@ func build(config: Node) -> void:
 	# ══ BEHAVIOR SECTION ═══════════════════════════════════════════
 	_add_section_label(tb_vbox, "BEHAVIOR")
 
-	# Attention mode
-	var row_att = HBoxContainer.new()
-	tb_vbox.add_child(row_att)
-	_add_label(row_att, "Attention:")
-	_attention_selector = _add_dropdown(row_att, 140)
-	_attention_selector.add_item("Normal", 0)
-	_attention_selector.add_item("Focus", 1)
-	_attention_selector.add_item("Chill", 2)
-	_attention_selector.add_item("Quiet", 3)
-	_attention_selector.add_item("Sleep", 4)
-	_attention_selector.mouse_filter = Control.MOUSE_FILTER_STOP
-	_attention_selector.item_selected.connect(func(idx):
-		var modes = ["normal", "focus", "chill", "quiet", "sleep"]
-		if idx < modes.size():
-			attention_changed.emit(modes[idx])
+	# Engagement mode selector
+	var row_engage = HBoxContainer.new()
+	tb_vbox.add_child(row_engage)
+	_add_label(row_engage, "Engagement:")
+	_engagement_selector = _add_dropdown(row_engage, 140)
+	_engagement_selector.add_item("Chat Only", 0)
+	_engagement_selector.add_item("Aware", 1)
+	_engagement_selector.add_item("Live", 2)
+	_engagement_selector.select(1)  # default: Aware
+	_engagement_selector.mouse_filter = Control.MOUSE_FILTER_STOP
+	_engagement_selector.item_selected.connect(_on_engagement_selected)
+
+	# Aware sub-selector (Normal / Focus / Chill) — only visible when Aware
+	_aware_sub_row = HBoxContainer.new()
+	tb_vbox.add_child(_aware_sub_row)
+	_add_label(_aware_sub_row, "Style:")
+	_aware_sub_selector = _add_dropdown(_aware_sub_row, 140)
+	_aware_sub_selector.add_item("Normal", 0)
+	_aware_sub_selector.add_item("Focus", 1)
+	_aware_sub_selector.add_item("Chill", 2)
+	_aware_sub_selector.mouse_filter = Control.MOUSE_FILTER_STOP
+	_aware_sub_selector.item_selected.connect(func(idx):
+		var styles = ["normal", "focus", "chill"]
+		if idx < styles.size():
+			engagement_mode_changed.emit("aware_" + styles[idx])
 	)
+	_aware_sub_row.visible = true  # visible by default (Aware is default)
+
+	# Live mode: screenshot interval slider (15-60s, default 20)
+	_screenshot_row = HBoxContainer.new()
+	tb_vbox.add_child(_screenshot_row)
+	_add_label(_screenshot_row, "Screenshot:")
+	_screenshot_slider = HSlider.new()
+	_screenshot_slider.min_value = 15
+	_screenshot_slider.max_value = 60
+	_screenshot_slider.value = 20
+	_screenshot_slider.step = 1
+	_screenshot_slider.custom_minimum_size = Vector2(100, 0)
+	_screenshot_slider.mouse_filter = Control.MOUSE_FILTER_STOP
+	_screenshot_row.add_child(_screenshot_slider)
+	_screenshot_label = Label.new()
+	_screenshot_label.text = "20s"
+	_screenshot_label.add_theme_font_size_override("font_size", 10)
+	_screenshot_label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7))
+	_screenshot_label.custom_minimum_size = Vector2(30, 0)
+	_screenshot_row.add_child(_screenshot_label)
+	_screenshot_slider.value_changed.connect(func(v):
+		_screenshot_label.text = str(int(v)) + "s"
+		screenshot_interval_changed.emit(v)
+	)
+	_screenshot_row.visible = false  # only visible in Live mode
+
+	# Live mode: audio interval slider (5-30s, default 15)
+	_audio_row = HBoxContainer.new()
+	tb_vbox.add_child(_audio_row)
+	_add_label(_audio_row, "Audio:")
+	_audio_slider = HSlider.new()
+	_audio_slider.min_value = 5
+	_audio_slider.max_value = 30
+	_audio_slider.value = 15
+	_audio_slider.step = 1
+	_audio_slider.custom_minimum_size = Vector2(100, 0)
+	_audio_slider.mouse_filter = Control.MOUSE_FILTER_STOP
+	_audio_row.add_child(_audio_slider)
+	_audio_label = Label.new()
+	_audio_label.text = "15s"
+	_audio_label.add_theme_font_size_override("font_size", 10)
+	_audio_label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7))
+	_audio_label.custom_minimum_size = Vector2(30, 0)
+	_audio_row.add_child(_audio_label)
+	_audio_slider.value_changed.connect(func(v):
+		_audio_label.text = str(int(v)) + "s"
+		audio_interval_changed.emit(v)
+	)
+	_audio_row.visible = false  # only visible in Live mode
 
 	# Focus window selector
 	var row_focus = HBoxContainer.new()
@@ -169,7 +239,7 @@ func build(config: Node) -> void:
 
 	# Refresh windows button
 	_focus_refresh_btn = Button.new()
-	_focus_refresh_btn.text = "↻"
+	_focus_refresh_btn.text = "\u21bb"
 	_focus_refresh_btn.add_theme_font_size_override("font_size", 14)
 	_focus_refresh_btn.custom_minimum_size = Vector2(30, 0)
 	_focus_refresh_btn.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -183,15 +253,16 @@ func build(config: Node) -> void:
 	_focus_refresh_btn.pressed.connect(_refresh_window_list)
 	row_focus.add_child(_focus_refresh_btn)
 
-	# Screen listen toggle — captures system audio to understand content
-	var row_listen = HBoxContainer.new()
-	tb_vbox.add_child(row_listen)
-	_add_label(row_listen, "Listen to screen:")
+	# Screen listen toggle — only visible in Aware mode
+	_screen_listen_row = HBoxContainer.new()
+	tb_vbox.add_child(_screen_listen_row)
+	_add_label(_screen_listen_row, "Listen to screen:")
 	_screen_listen_toggle = CheckButton.new()
 	_screen_listen_toggle.button_pressed = false
 	_screen_listen_toggle.mouse_filter = Control.MOUSE_FILTER_STOP
 	_screen_listen_toggle.toggled.connect(func(on): screen_listen_changed.emit(on))
-	row_listen.add_child(_screen_listen_toggle)
+	_screen_listen_row.add_child(_screen_listen_toggle)
+	_screen_listen_row.visible = true  # visible by default (Aware is default)
 
 	_add_separator(tb_vbox)
 
@@ -253,12 +324,36 @@ func update_status(text: String) -> void:
 		_status_label.text = text
 
 
-func set_attention_mode(mode: String) -> void:
-	"""Set the attention dropdown to match the current mode."""
-	var modes = ["normal", "focus", "chill", "quiet", "sleep"]
+func set_engagement_mode(mode: String) -> void:
+	"""Set the engagement dropdown to match the current mode."""
+	var modes = ["chat_only", "aware", "live"]
 	var idx = modes.find(mode)
-	if idx >= 0 and _attention_selector:
-		_attention_selector.select(idx)
+	if idx >= 0 and _engagement_selector:
+		_engagement_selector.select(idx)
+		_update_engagement_visibility(idx)
+
+
+func _on_engagement_selected(idx: int) -> void:
+	"""Handle engagement dropdown selection — update visibility and emit signal."""
+	_update_engagement_visibility(idx)
+	var modes = ["chat_only", "aware", "live"]
+	if idx < modes.size():
+		engagement_mode_changed.emit(modes[idx])
+
+
+func _update_engagement_visibility(idx: int) -> void:
+	"""Show/hide sub-controls based on engagement mode."""
+	# Aware sub-selector: only in Aware mode
+	if _aware_sub_row:
+		_aware_sub_row.visible = (idx == 1)
+	# Screen listen toggle: only in Aware mode
+	if _screen_listen_row:
+		_screen_listen_row.visible = (idx == 1)
+	# Live sliders: only in Live mode
+	if _screenshot_row:
+		_screenshot_row.visible = (idx == 2)
+	if _audio_row:
+		_audio_row.visible = (idx == 2)
 
 
 func _refresh_window_list() -> void:

@@ -20,6 +20,7 @@ var _ambient_llm: Node = null
 var _persistent_state: Node = null
 var _desktop_physics: Node = null
 var _screen_listen: Node = null
+var _engagement_mode: Node = null
 var hub_client: HubClient = null
 var connection_manager: ConnectionManager = null
 var config: Node = null
@@ -71,6 +72,10 @@ func _ready() -> void:
 	text_input = chat_panel.text_input
 	add_child(chat_panel)
 
+	# ── Engagement Mode ───────────────────────────────────────────────
+	_engagement_mode = preload("res://scripts/awareness/engagement_mode.gd").new()
+	add_child(_engagement_mode)
+
 	# ── Toolbar (extracted to scripts/ui/toolbar.gd) ──────────────────
 	_toolbar = preload("res://scripts/ui/toolbar.gd").new()
 	_toolbar.build(config)
@@ -88,7 +93,15 @@ func _ready() -> void:
 	)
 	_toolbar.voice_enabled_changed.connect(_on_voice_toggle)
 	_toolbar.mic_enabled_changed.connect(_on_mic_toggle)
-	_toolbar.attention_changed.connect(_on_attention_changed)
+	_toolbar.engagement_mode_changed.connect(_on_engagement_mode_changed)
+	_toolbar.screenshot_interval_changed.connect(func(v):
+		if _screen_context:
+			_screen_context.poll_interval = v
+	)
+	_toolbar.audio_interval_changed.connect(func(v):
+		if _screen_listen:
+			_screen_listen.capture_interval = v
+	)
 	_toolbar.focus_window_changed.connect(_on_focus_window_changed)
 	_toolbar.screen_listen_changed.connect(func(on):
 		if _screen_listen:
@@ -452,26 +465,34 @@ func _on_text_submitted(text: String) -> void:
 func _handle_command(cmd: String) -> void:
 	match cmd:
 		"/focus":
-			# She pays attention to what you're doing, comments on it
+			if _engagement_mode and _engagement_mode.get_mode_name() != "aware":
+				add_chat_message("System", "Style commands only work in Aware mode")
+				return
 			if _ambient_llm:
 				_ambient_llm.min_interval = 30.0
 			if _behavior:
 				_behavior.INITIATE_CHANCE = 0.4
 			add_chat_message("System", "Kira is focused on you")
 		"/chill":
-			# She relaxes, rarely comments
+			if _engagement_mode and _engagement_mode.get_mode_name() != "aware":
+				add_chat_message("System", "Style commands only work in Aware mode")
+				return
 			if _ambient_llm:
 				_ambient_llm.min_interval = 300.0
 			if _behavior:
 				_behavior.INITIATE_CHANCE = 0.05
 			add_chat_message("System", "Kira is chilling")
 		"/quiet":
-			# She shuts up entirely — no ambient queries
+			if _engagement_mode and _engagement_mode.get_mode_name() != "aware":
+				add_chat_message("System", "Style commands only work in Aware mode")
+				return
 			if _ambient_llm:
 				_ambient_llm.min_interval = 99999.0
 			add_chat_message("System", "Kira is quiet")
 		"/normal":
-			# Default behavior
+			if _engagement_mode and _engagement_mode.get_mode_name() != "aware":
+				add_chat_message("System", "Style commands only work in Aware mode")
+				return
 			if _ambient_llm:
 				_ambient_llm.min_interval = 120.0
 			if _behavior:
@@ -501,7 +522,12 @@ func _handle_command(cmd: String) -> void:
 			add_chat_message("System", "\n".join([
 				"[b]Kira Commands[/b]",
 				"",
-				"[color=#e10600]Attention[/color]",
+				"[color=#e10600]Engagement Modes[/color]  (F3 toolbar)",
+				"  Chat Only — no awareness, just conversation",
+				"  Aware — screen context + ambient comments",
+				"  Live — vision + audio capture, high engagement",
+				"",
+				"[color=#e10600]Aware Styles[/color]  (only in Aware mode)",
 				"  /focus — watches closely, comments often (30s)",
 				"  /chill — relaxed, rare comments (5 min)",
 				"  /quiet — no ambient comments at all",
@@ -671,8 +697,37 @@ func _on_mic_toggle(enabled: bool) -> void:
 	_mic_enabled = enabled
 	add_chat_message("System", "Mic " + ("enabled" if enabled else "disabled"))
 
-func _on_attention_changed(mode: String) -> void:
-	_handle_command("/" + mode)
+func _on_engagement_mode_changed(mode: String) -> void:
+	# Handle aware sub-styles (aware_normal, aware_focus, aware_chill)
+	if mode.begins_with("aware_"):
+		var style = mode.substr(6)  # strip "aware_"
+		_handle_command("/" + style)
+		return
+
+	if _engagement_mode:
+		_engagement_mode.set_mode_by_name(mode)
+
+	match mode:
+		"chat_only":
+			if _screen_context: _screen_context.poll_interval = 999.0  # effectively disable
+			if _screen_listen: _screen_listen.set_enabled(false)
+			if _ambient_llm: _ambient_llm.min_interval = 99999.0
+			if _behavior: _behavior.INITIATE_CHANCE = 0.0
+			add_chat_message("System", "Chat Only mode")
+		"aware":
+			if _screen_context: _screen_context.poll_interval = 5.0
+			if _ambient_llm: _ambient_llm.min_interval = 120.0
+			if _behavior: _behavior.INITIATE_CHANCE = 0.15
+			add_chat_message("System", "Aware mode")
+		"live":
+			if _screen_context: _screen_context.poll_interval = 3.0
+			if _screen_listen:
+				_screen_listen.set_enabled(true)
+				_screen_listen.capture_duration = 10.0
+				_screen_listen.capture_interval = 12.0
+			if _ambient_llm: _ambient_llm.min_interval = 15.0
+			if _behavior: _behavior.INITIATE_CHANCE = 0.5
+			add_chat_message("System", "Live mode \u2014 vision + audio active")
 
 func _on_focus_window_changed(window_title: String) -> void:
 	_focus_window = window_title
