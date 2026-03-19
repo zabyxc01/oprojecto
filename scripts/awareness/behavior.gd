@@ -32,7 +32,7 @@ const IDLE_THRESHOLD := 120.0      # 2 min → IDLE
 const SLEEP_THRESHOLD := 600.0     # 10 min → SLEEPING
 const REACT_DURATION := 5.0        # reaction state lasts 5s
 const INITIATE_MIN_COOLDOWN := 120.0  # min 2 min between initiations
-const INITIATE_CHANCE := 0.15      # 15% chance per check when conditions met
+var INITIATE_CHANCE := 0.15        # 15% chance per check when conditions met (adjustable via /focus /chill)
 
 # Idle animations to cycle through
 const IDLE_ANIMS := ["LookAround", "Relax", "Thinking"]

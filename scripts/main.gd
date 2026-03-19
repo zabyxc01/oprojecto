@@ -406,12 +406,71 @@ func _on_text_submitted(text: String) -> void:
 	if text.strip_edges().is_empty():
 		return
 	text_input.clear()
+
+	# Chat commands — control Kira's attention
+	var cmd = text.strip_edges().to_lower()
+	if cmd.begins_with("/"):
+		_handle_command(cmd)
+		return
+
 	add_chat_message("You", text)
 	voice_pipeline.send_text(text)
 	if _behavior:
 		_behavior.on_user_interaction()
 	if _persistent_state:
 		_persistent_state.record_interaction()
+
+
+func _handle_command(cmd: String) -> void:
+	match cmd:
+		"/focus":
+			# She pays attention to what you're doing, comments on it
+			if _ambient_llm:
+				_ambient_llm.min_interval = 30.0
+			if _behavior:
+				_behavior.INITIATE_CHANCE = 0.4
+			add_chat_message("System", "Kira is focused on you")
+		"/chill":
+			# She relaxes, rarely comments
+			if _ambient_llm:
+				_ambient_llm.min_interval = 300.0
+			if _behavior:
+				_behavior.INITIATE_CHANCE = 0.05
+			add_chat_message("System", "Kira is chilling")
+		"/quiet":
+			# She shuts up entirely — no ambient queries
+			if _ambient_llm:
+				_ambient_llm.min_interval = 99999.0
+			add_chat_message("System", "Kira is quiet")
+		"/normal":
+			# Default behavior
+			if _ambient_llm:
+				_ambient_llm.min_interval = 120.0
+			if _behavior:
+				_behavior.INITIATE_CHANCE = 0.15
+			add_chat_message("System", "Kira is back to normal")
+		"/sleep":
+			if _behavior:
+				_behavior.current_state = _behavior.State.SLEEPING
+				_behavior._state_timer = 0.0
+			add_chat_message("System", "Kira is sleeping")
+		"/wake":
+			if _behavior:
+				_behavior.on_user_interaction()
+			add_chat_message("System", "Kira is awake")
+		"/status":
+			var parts := []
+			if _behavior:
+				parts.append("State: " + _behavior.get_state_name())
+			if _ambient_llm:
+				parts.append("Ambient interval: " + str(int(_ambient_llm.min_interval)) + "s")
+				parts.append("Cooldown: " + str(int(_ambient_llm.get_cooldown_remaining())) + "s")
+			if _persistent_state:
+				parts.append("Familiarity: " + _persistent_state.get_familiarity_label())
+				parts.append("Sessions: " + str(_persistent_state.state.get("total_sessions", 0)))
+			add_chat_message("System", "\n".join(parts) if parts.size() > 0 else "No status available")
+		_:
+			add_chat_message("System", "Commands: /focus /chill /quiet /normal /sleep /wake /status")
 
 func _on_voice_response(text: String) -> void:
 	add_chat_message("Kira", text)
