@@ -273,6 +273,11 @@ func _stop_recording() -> void:
 		_set_state(PipelineState.IDLE)
 		return
 
+	if duration > 60.0:
+		print("[pipeline] Recording too long (", "%.0f" % duration, "s), trimming to 60s")
+		frames = frames.slice(0, int(MIC_SAMPLE_RATE * 60.0))
+		duration = 60.0
+
 	# Check audio level — reject near-silence
 	var peak := 0.0
 	for frame in frames:
