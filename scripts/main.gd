@@ -98,12 +98,64 @@ func _ready() -> void:
 	_toolbar.mic_enabled_changed.connect(_on_mic_toggle)
 	_toolbar.engagement_mode_changed.connect(_on_engagement_mode_changed)
 	_toolbar.screenshot_interval_changed.connect(func(v):
-		if _screen_context:
-			_screen_context.poll_interval = v
+		if _screen_capture:
+			_screen_capture.capture_interval = v
 	)
 	_toolbar.audio_interval_changed.connect(func(v):
 		if _screen_listen:
 			_screen_listen.capture_interval = v
+	)
+	_toolbar.reaction_speed_changed.connect(func(v):
+		if _ambient_llm:
+			_ambient_llm.min_interval = v
+	)
+	_toolbar.initiation_changed.connect(func(v):
+		if _behavior:
+			_behavior.INITIATE_CHANCE = v
+	)
+	_toolbar.resource_preset_changed.connect(func(preset):
+		if hub_client and hub_client._is_connected:
+			var http = HTTPRequest.new()
+			add_child(http)
+			http.request(
+				hub_client._hub_url.replace("ws://", "http://").replace("/extensions/companion/ws", "") + "/extensions/companion/presets/" + preset,
+				["Content-Type: application/json"],
+				HTTPClient.METHOD_POST,
+				"{}"
+			)
+			http.request_completed.connect(func(_r, code, _h, _b):
+				http.queue_free()
+				var label = {"max_quality": "Max Quality", "optimal": "Optimal", "lite": "Lite", "gaming": "Gaming"}
+				add_chat_message("System", "Resource preset: " + label.get(preset, preset))
+			)
+	)
+	_toolbar.llm_model_changed.connect(func(model_name):
+		if not hub_client or not hub_client._is_connected:
+			add_chat_message("System", "Not connected to hub")
+			return
+		var base_url = hub_client._hub_url.replace("ws://", "http://").replace("/extensions/companion/ws", "")
+		add_chat_message("System", "Switching to " + model_name + "...")
+		var http = HTTPRequest.new()
+		add_child(http)
+		http.request(
+			base_url + "/extensions/companion/model/switch",
+			["Content-Type: application/json"],
+			HTTPClient.METHOD_POST,
+			JSON.stringify({"model": model_name})
+		)
+		http.request_completed.connect(func(_r, code, _h, body):
+			http.queue_free()
+			var result = JSON.parse_string(body.get_string_from_utf8())
+			if result is Dictionary and result.has("error"):
+				add_chat_message("System", "Model switch failed: " + result["error"])
+			elif result is Dictionary:
+				var msg = "Model: " + result.get("model", model_name)
+				if result.get("unloaded", "") != "":
+					msg += " (unloaded " + result["unloaded"] + ")"
+				add_chat_message("System", msg)
+			else:
+				add_chat_message("System", "Model switched to " + model_name)
+		)
 	)
 	_toolbar.focus_window_changed.connect(_on_focus_window_changed)
 	_toolbar.screen_listen_changed.connect(func(on):
@@ -183,6 +235,10 @@ func _ready() -> void:
 	_screen_context.context_changed.connect(_ambient_llm.on_context_changed)
 	# Route behavior speak requests through ambient LLM (sole path)
 	_behavior.wants_to_speak.connect(func(prompt):
+		# In live mode, behavior doesn't send its own queries —
+		# the vision pipeline handles all output as consolidated responses
+		if _engagement_mode and _engagement_mode.get_mode_name() == "live":
+			return
 		var ctx = _screen_context.get_current()
 		_ambient_llm.request_query(prompt, "observation", ctx)
 	)

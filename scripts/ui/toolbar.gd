@@ -16,6 +16,10 @@ signal screenshot_interval_changed(value: float)
 signal audio_interval_changed(value: float)
 signal focus_window_changed(window_title: String)
 signal screen_listen_changed(enabled: bool)
+signal reaction_speed_changed(value: float)  # ambient min_interval in seconds
+signal initiation_changed(value: float)  # 0.0-1.0
+signal resource_preset_changed(preset: String)  # max_quality, optimal, lite, gaming
+signal llm_model_changed(model_name: String)  # ollama model name
 
 var _auto_toggle: CheckButton
 var model_selector: OptionButton
@@ -36,6 +40,13 @@ var _screenshot_label: Label
 var _audio_slider: HSlider
 var _audio_row: HBoxContainer
 var _audio_label: Label
+var _reaction_slider: HSlider
+var _reaction_row: HBoxContainer
+var _reaction_label: Label
+var _initiation_slider: HSlider
+var _initiation_row: HBoxContainer
+var _initiation_label: Label
+var _focus_row: HBoxContainer
 var _status_label: Label
 
 const MODELS_DIR := "/mnt/storage/staging/ai-models-animations/vrm-models/"
@@ -109,6 +120,50 @@ func build(config: Node) -> void:
 
 	_add_separator(tb_vbox)
 
+	# ══ RESOURCE PRESET ════════════════════════════════════════════
+	_add_section_label(tb_vbox, "RESOURCE PRESET")
+	var row_preset = HBoxContainer.new()
+	tb_vbox.add_child(row_preset)
+	_add_label(row_preset, "Mode:")
+	var preset_selector = _add_dropdown(row_preset, 160)
+	preset_selector.add_item("Max Quality (~10GB)", 0)
+	preset_selector.add_item("Optimal (~6GB)", 1)
+	preset_selector.add_item("Lite (~3GB)", 2)
+	preset_selector.add_item("Gaming (0 VRAM)", 3)
+	preset_selector.select(1)  # default: optimal
+	preset_selector.mouse_filter = Control.MOUSE_FILTER_STOP
+	preset_selector.item_selected.connect(func(idx):
+		var presets = ["max_quality", "optimal", "lite", "gaming"]
+		if idx < presets.size():
+			resource_preset_changed.emit(presets[idx])
+	)
+
+	_add_separator(tb_vbox)
+
+	# ══ LLM MODEL ══════════════════════════════════════════════════
+	_add_section_label(tb_vbox, "LLM MODEL")
+	var row_llm = HBoxContainer.new()
+	tb_vbox.add_child(row_llm)
+	_add_label(row_llm, "Chat:")
+	var _llm_selector = _add_dropdown(row_llm, 160)
+	_llm_selector.add_item("gemma3:latest", 0)
+	_llm_selector.add_item("qwen2.5:7b", 1)
+	_llm_selector.add_item("llama3.1:8b", 2)
+	_llm_selector.add_item("phi-3.5:latest", 3)
+	_llm_selector.mouse_filter = Control.MOUSE_FILTER_STOP
+	_llm_selector.item_selected.connect(func(idx):
+		var model = _llm_selector.get_item_text(idx)
+		llm_model_changed.emit(model)
+	)
+
+	var _llm_status = Label.new()
+	_llm_status.text = ""
+	_llm_status.add_theme_font_size_override("font_size", 9)
+	_llm_status.add_theme_color_override("font_color", Color(0.5, 0.8, 0.5))
+	tb_vbox.add_child(_llm_status)
+
+	_add_separator(tb_vbox)
+
 	# ══ VOICE SECTION ══════════════════════════════════════════════
 	_add_section_label(tb_vbox, "VOICE")
 
@@ -170,7 +225,7 @@ func build(config: Node) -> void:
 	_engagement_selector.mouse_filter = Control.MOUSE_FILTER_STOP
 	_engagement_selector.item_selected.connect(_on_engagement_selected)
 
-	# Aware sub-selector (Normal / Focus / Chill) — only visible when Aware
+	# Style sub-selector (Normal / Focus / Chill) — quick presets, only in Aware
 	_aware_sub_row = HBoxContainer.new()
 	tb_vbox.add_child(_aware_sub_row)
 	_add_label(_aware_sub_row, "Style:")
@@ -179,20 +234,64 @@ func build(config: Node) -> void:
 	_aware_sub_selector.add_item("Focus", 1)
 	_aware_sub_selector.add_item("Chill", 2)
 	_aware_sub_selector.mouse_filter = Control.MOUSE_FILTER_STOP
-	_aware_sub_selector.item_selected.connect(func(idx):
-		var styles = ["normal", "focus", "chill"]
-		if idx < styles.size():
-			engagement_mode_changed.emit("aware_" + styles[idx])
-	)
+	_aware_sub_selector.item_selected.connect(_on_style_preset_selected)
 	_aware_sub_row.visible = true  # visible by default (Aware is default)
 
-	# Live mode: screenshot interval slider (15-60s, default 20)
+	# Reaction Speed slider (15-600s, default 120) — Aware & Live
+	_reaction_row = HBoxContainer.new()
+	tb_vbox.add_child(_reaction_row)
+	_add_label(_reaction_row, "React Speed:")
+	_reaction_slider = HSlider.new()
+	_reaction_slider.min_value = 15
+	_reaction_slider.max_value = 600
+	_reaction_slider.value = 120
+	_reaction_slider.step = 5
+	_reaction_slider.custom_minimum_size = Vector2(100, 0)
+	_reaction_slider.mouse_filter = Control.MOUSE_FILTER_STOP
+	_reaction_row.add_child(_reaction_slider)
+	_reaction_label = Label.new()
+	_reaction_label.text = "120s"
+	_reaction_label.add_theme_font_size_override("font_size", 10)
+	_reaction_label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7))
+	_reaction_label.custom_minimum_size = Vector2(40, 0)
+	_reaction_row.add_child(_reaction_label)
+	_reaction_slider.value_changed.connect(func(v):
+		_reaction_label.text = str(int(v)) + "s"
+		reaction_speed_changed.emit(v)
+	)
+	_reaction_row.visible = true  # visible by default (Aware is default)
+
+	# Initiation slider (0-100%, default 15%) — Aware & Live
+	_initiation_row = HBoxContainer.new()
+	tb_vbox.add_child(_initiation_row)
+	_add_label(_initiation_row, "Initiation:")
+	_initiation_slider = HSlider.new()
+	_initiation_slider.min_value = 0
+	_initiation_slider.max_value = 100
+	_initiation_slider.value = 15
+	_initiation_slider.step = 1
+	_initiation_slider.custom_minimum_size = Vector2(100, 0)
+	_initiation_slider.mouse_filter = Control.MOUSE_FILTER_STOP
+	_initiation_row.add_child(_initiation_slider)
+	_initiation_label = Label.new()
+	_initiation_label.text = "15%"
+	_initiation_label.add_theme_font_size_override("font_size", 10)
+	_initiation_label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7))
+	_initiation_label.custom_minimum_size = Vector2(40, 0)
+	_initiation_row.add_child(_initiation_label)
+	_initiation_slider.value_changed.connect(func(v):
+		_initiation_label.text = str(int(v)) + "%"
+		initiation_changed.emit(v / 100.0)
+	)
+	_initiation_row.visible = true  # visible by default (Aware is default)
+
+	# Live mode: screenshot interval slider (15-120s, default 20)
 	_screenshot_row = HBoxContainer.new()
 	tb_vbox.add_child(_screenshot_row)
 	_add_label(_screenshot_row, "Screenshot:")
 	_screenshot_slider = HSlider.new()
 	_screenshot_slider.min_value = 15
-	_screenshot_slider.max_value = 60
+	_screenshot_slider.max_value = 120
 	_screenshot_slider.value = 20
 	_screenshot_slider.step = 1
 	_screenshot_slider.custom_minimum_size = Vector2(100, 0)
@@ -210,13 +309,13 @@ func build(config: Node) -> void:
 	)
 	_screenshot_row.visible = false  # only visible in Live mode
 
-	# Live mode: audio interval slider (5-30s, default 15)
+	# Live mode: audio interval slider (5-60s, default 15)
 	_audio_row = HBoxContainer.new()
 	tb_vbox.add_child(_audio_row)
 	_add_label(_audio_row, "Audio:")
 	_audio_slider = HSlider.new()
 	_audio_slider.min_value = 5
-	_audio_slider.max_value = 30
+	_audio_slider.max_value = 60
 	_audio_slider.value = 15
 	_audio_slider.step = 1
 	_audio_slider.custom_minimum_size = Vector2(100, 0)
@@ -234,11 +333,11 @@ func build(config: Node) -> void:
 	)
 	_audio_row.visible = false  # only visible in Live mode
 
-	# Focus window selector
-	var row_focus = HBoxContainer.new()
-	tb_vbox.add_child(row_focus)
-	_add_label(row_focus, "Watch:")
-	_focus_selector = _add_dropdown(row_focus, 160)
+	# Focus window selector — Aware & Live
+	_focus_row = HBoxContainer.new()
+	tb_vbox.add_child(_focus_row)
+	_add_label(_focus_row, "Watch:")
+	_focus_selector = _add_dropdown(_focus_row, 160)
 	_focus_selector.add_item("Active Window", 0)
 	_focus_selector.mouse_filter = Control.MOUSE_FILTER_STOP
 	_focus_selector.item_selected.connect(func(idx):
@@ -262,9 +361,10 @@ func build(config: Node) -> void:
 	refresh_style.corner_radius_bottom_right = 4
 	_focus_refresh_btn.add_theme_stylebox_override("normal", refresh_style)
 	_focus_refresh_btn.pressed.connect(_refresh_window_list)
-	row_focus.add_child(_focus_refresh_btn)
+	_focus_row.add_child(_focus_refresh_btn)
+	_focus_row.visible = true  # visible by default (Aware is default)
 
-	# Screen listen toggle — only visible in Aware mode
+	# Screen listen toggle — Aware & Live
 	_screen_listen_row = HBoxContainer.new()
 	tb_vbox.add_child(_screen_listen_row)
 	_add_label(_screen_listen_row, "Listen to screen:")
@@ -370,18 +470,53 @@ func _on_engagement_selected(idx: int) -> void:
 
 
 func _update_engagement_visibility(idx: int) -> void:
-	"""Show/hide sub-controls based on engagement mode."""
-	# Aware sub-selector: only in Aware mode
+	"""Show/hide sub-controls based on engagement mode.
+	Chat Only (0): hide everything except autonomous toggle + engagement dropdown.
+	Aware (1): style preset, reaction speed, initiation, watch, screen listen.
+	Live (2): reaction speed, initiation, screenshot, audio, watch, screen listen."""
+	var is_aware = (idx == 1)
+	var is_live = (idx == 2)
+	var is_active = is_aware or is_live
+	# Style preset: Aware only
 	if _aware_sub_row:
-		_aware_sub_row.visible = (idx == 1)
-	# Screen listen toggle: only in Aware mode
-	if _screen_listen_row:
-		_screen_listen_row.visible = (idx == 1)
-	# Live sliders: only in Live mode
+		_aware_sub_row.visible = is_aware
+	# Reaction speed & initiation: Aware + Live
+	if _reaction_row:
+		_reaction_row.visible = is_active
+	if _initiation_row:
+		_initiation_row.visible = is_active
+	# Screenshot & audio sliders: Live only
 	if _screenshot_row:
-		_screenshot_row.visible = (idx == 2)
+		_screenshot_row.visible = is_live
 	if _audio_row:
-		_audio_row.visible = (idx == 2)
+		_audio_row.visible = is_live
+	# Watch (focus window): Aware + Live
+	if _focus_row:
+		_focus_row.visible = is_active
+	# Screen listen: Aware + Live
+	if _screen_listen_row:
+		_screen_listen_row.visible = is_active
+
+
+func _on_style_preset_selected(idx: int) -> void:
+	"""Apply style presets to reaction speed and initiation sliders."""
+	# Presets: [reaction_speed, initiation_percent]
+	var presets = [
+		[120, 15],  # Normal
+		[30, 40],   # Focus
+		[300, 5],   # Chill
+	]
+	if idx < presets.size():
+		var speed = presets[idx][0]
+		var init = presets[idx][1]
+		if _reaction_slider:
+			_reaction_slider.value = speed  # triggers value_changed -> signal
+		if _initiation_slider:
+			_initiation_slider.value = init  # triggers value_changed -> signal
+	# Also emit the aware sub-mode signal
+	var styles = ["normal", "focus", "chill"]
+	if idx < styles.size():
+		engagement_mode_changed.emit("aware_" + styles[idx])
 
 
 func _refresh_window_list() -> void:

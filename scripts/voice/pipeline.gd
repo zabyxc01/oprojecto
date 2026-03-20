@@ -98,13 +98,15 @@ func _send_via_hub(text: String) -> void:
 
 var _tts_timeout_timer: SceneTreeTimer = null
 
-func on_hub_chat_response(text: String, done: bool, emotion: Variant) -> void:
+func on_hub_chat_response(text: String, done: bool, emotion: Variant, objective: bool = false) -> void:
 	if done and text != "":
 		conversation_history.append({"role": "assistant", "content": text})
 		_save_history()
 		on_response.emit(text)
-		# Emit emotion data (dict or string)
-		if emotion is Dictionary:
+		if objective:
+			# Objective/factual response — force Thinking animation, suppress persona emotions
+			on_emotion.emit({"primary": "thinking", "primary_intensity": 0.7, "secondary": "", "secondary_intensity": 0.0, "objective": true})
+		elif emotion is Dictionary:
 			var primary: String = emotion.get("primary", "neutral")
 			if primary != "neutral":
 				on_emotion.emit(emotion)

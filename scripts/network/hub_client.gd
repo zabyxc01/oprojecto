@@ -8,7 +8,7 @@ class_name HubClient
 
 signal connected
 signal disconnected
-signal chat_response(text: String, done: bool, emotion: Variant)
+signal chat_response(text: String, done: bool, emotion: Variant, objective: bool)
 signal tts_audio(data: PackedByteArray, format: String)
 signal stt_result(text: String)
 signal hub_state(services: Dictionary)
@@ -169,7 +169,35 @@ func _handle_message(raw: String) -> void:
 				emotion_data = emotion_raw
 			else:
 				emotion_data = {"primary": str(emotion_raw), "primary_intensity": 0.7, "secondary": "", "secondary_intensity": 0.0}
-			chat_response.emit(payload.get("text", ""), payload.get("done", true), emotion_data)
+			var is_objective: bool = payload.get("objective", false)
+			# Print debug info if present
+			var dbg = payload.get("debug", {})
+			if dbg is Dictionary and dbg.size() > 0:
+				var src = dbg.get("rag_source", "")
+				var conf = dbg.get("rag_confidence", 0)
+				var personal = dbg.get("rag_personal", true)
+				var obj = dbg.get("rag_objective", false)
+				var docs_len = dbg.get("rag_docs_len", 0)
+				var git = dbg.get("git_context", false)
+				var pri = dbg.get("priority", 3)
+				var model = dbg.get("model", "?")
+				var temp = dbg.get("temperature", "?")
+				var ctx = dbg.get("num_ctx", 4096)
+				var emo = dbg.get("emotion_detected", "?")
+				var mood = dbg.get("mood", "?")
+				var narr = dbg.get("narrative_exchanges", 0)
+				var tts = dbg.get("tts_engine", "?")
+				print("┌─── [DEBUG] Response Pipeline ───────────────────────")
+				if src != "":
+					print("│ RAG: source=%s  confidence=%.2f  personal=%s  objective=%s" % [src, conf, str(personal), str(obj)])
+					print("│ RAG: docs=%d chars  git=%s" % [docs_len, str(git)])
+				else:
+					print("│ RAG: no match — LLM only")
+				print("│ LLM: model=%s  temp=%s  ctx=%d  priority=%d" % [model, str(temp), ctx, pri])
+				print("│ Emotion: %s  mood=%s  narrative=%d exchanges" % [emo, mood, narr])
+				print("│ TTS: %s  objective=%s" % [tts, str(obj)])
+				print("└────────────────────────────────────────────────────")
+			chat_response.emit(payload.get("text", ""), payload.get("done", true), emotion_data, is_objective)
 
 		"tts.audio":
 			var b64: String = payload.get("audio_b64", "")
