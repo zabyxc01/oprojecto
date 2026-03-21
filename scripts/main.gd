@@ -71,6 +71,7 @@ func _ready() -> void:
 	chat_panel.text_submitted.connect(_on_text_submitted)
 	chat_panel.center_pressed.connect(func(): awareness.toggle_closeup())
 	chat_panel.toggle_pressed.connect(_on_chat_toggle)
+	chat_panel.web_search_toggled.connect(_on_web_search_toggled)
 	chat_messages = chat_panel.chat_messages
 	text_input = chat_panel.text_input
 	add_child(chat_panel)
@@ -195,6 +196,8 @@ func _ready() -> void:
 	hub_client.chat_response.connect(voice_pipeline.on_hub_chat_response)
 	hub_client.tts_audio.connect(voice_pipeline.on_hub_tts_audio)
 	hub_client.stt_result.connect(_on_stt_result)
+	hub_client.config_received.connect(_on_hub_config)
+	hub_client.config_updated.connect(_on_hub_config_updated)
 	connection_manager.mode_changed.connect(_on_connection_mode_changed)
 	connection_manager.setup(hub_client)
 
@@ -230,7 +233,7 @@ func _ready() -> void:
 	add_child(_ambient_llm)
 	_ambient_llm.setup(voice_pipeline, hub_client)
 	_ambient_llm.query_sent.connect(func(prompt, qtype):
-		add_chat_message("System", "[%s]" % qtype)
+		print("[ambient] Query sent: %s" % qtype)
 	)
 	_screen_context.context_changed.connect(_ambient_llm.on_context_changed)
 	# Route behavior speak requests through ambient LLM (sole path)
@@ -303,6 +306,9 @@ func _ready() -> void:
 		_loader_ref.load_model(model_path)
 	else:
 		add_chat_message("System", "No default model found at " + model_path)
+
+	# ── Boot in Chat Only mode ────────────────────────────────────────
+	_on_engagement_mode_changed("chat_only")
 
 	# ── Startup greeting ──────────────────────────────────────────────
 	var greeting := _build_startup_greeting()
@@ -616,7 +622,28 @@ func _handle_command(cmd: String) -> void:
 			add_chat_message("System", "Unknown command. Type /help for commands.")
 
 func _on_voice_response(text: String) -> void:
+	# Route errors to system status bar, not chat bubbles
+	if text.begins_with("[LLM error") or text.begins_with("[STT error") or text.begins_with("[TTS error"):
+		print("[main] Error response: ", text)
+		add_chat_message("System", text)
+		return
 	add_chat_message("Kira", text)
+
+func _on_hub_config(cfg: Dictionary) -> void:
+	"""Hub sent full config on connect — sync F3 toolbar + chat panel."""
+	if _toolbar:
+		_toolbar.apply_hub_config(cfg)
+	if chat_panel:
+		chat_panel.set_web_search_enabled(cfg.get("rag_auto_web_search", false))
+	print("[main] Hub config synced on connect")
+
+func _on_hub_config_updated(updated: Dictionary, cfg: Dictionary) -> void:
+	"""Hub pushed a config change — sync F3 toolbar."""
+	if _toolbar:
+		_toolbar.apply_hub_config(cfg)
+	var keys = ", ".join(updated.keys())
+	add_chat_message("System", "Hub config updated: " + keys)
+	print("[main] Hub config pushed: ", updated)
 
 func _on_connection_mode_changed(mode: String) -> void:
 	voice_pipeline.hub_connected = (mode == "hub")
@@ -776,6 +803,20 @@ var _voice_enabled := true
 var _mic_enabled := true
 var _focus_window := ""  # empty = follow active window
 
+func _on_web_search_toggled(enabled: bool) -> void:
+	if hub_client and hub_client._is_connected:
+		var http = HTTPRequest.new()
+		add_child(http)
+		http.request(
+			hub_client._hub_url.replace("ws://", "http://").replace("/extensions/companion/ws", "") + "/extensions/companion/config",
+			["Content-Type: application/json"],
+			HTTPClient.METHOD_PATCH,
+			JSON.stringify({"rag_auto_web_search": enabled})
+		)
+		http.request_completed.connect(func(_r, _c, _h, _b): http.queue_free())
+	add_chat_message("System", "Web search " + ("enabled" if enabled else "disabled"))
+	print("[main] Web search toggled: ", enabled)
+
 func _on_voice_toggle(enabled: bool) -> void:
 	_voice_enabled = enabled
 	if voice_pipeline:
@@ -802,14 +843,19 @@ func _on_engagement_mode_changed(mode: String) -> void:
 			if _screen_listen: _screen_listen.set_enabled(false)
 			if _screen_capture: _screen_capture.set_enabled(false)
 			if _ambient_llm: _ambient_llm.min_interval = 99999.0
-			if _behavior: _behavior.INITIATE_CHANCE = 0.0
+			if _behavior:
+				_behavior.INITIATE_CHANCE = 0.0
+				_behavior.set_enabled(false)
 			add_chat_message("System", "Chat Only mode")
 		"aware":
 			if _screen_capture: _screen_capture.set_enabled(false)
+			if _screen_listen: _screen_listen.set_enabled(false)
 			if _screen_context: _screen_context.poll_interval = 5.0
 			if _ambient_llm: _ambient_llm.min_interval = 120.0
-			if _behavior: _behavior.INITIATE_CHANCE = 0.15
-			add_chat_message("System", "Aware mode")
+			if _behavior:
+				_behavior.INITIATE_CHANCE = 0.15
+				_behavior.set_enabled(true)
+			add_chat_message("System", "Aware mode — screen context active")
 		"live":
 			if _screen_context: _screen_context.poll_interval = 3.0
 			if _screen_listen:
@@ -818,8 +864,10 @@ func _on_engagement_mode_changed(mode: String) -> void:
 				_screen_listen.capture_interval = 12.0
 			if _screen_capture: _screen_capture.set_enabled(true)
 			if _ambient_llm: _ambient_llm.min_interval = 15.0
-			if _behavior: _behavior.INITIATE_CHANCE = 0.5
-			add_chat_message("System", "Live mode \u2014 vision + audio active")
+			if _behavior:
+				_behavior.INITIATE_CHANCE = 0.5
+				_behavior.set_enabled(true)
+			add_chat_message("System", "Live mode — vision + audio active")
 
 func _on_focus_window_changed(window_title: String) -> void:
 	_focus_window = window_title

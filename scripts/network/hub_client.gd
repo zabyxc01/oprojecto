@@ -12,6 +12,8 @@ signal chat_response(text: String, done: bool, emotion: Variant, objective: bool
 signal tts_audio(data: PackedByteArray, format: String)
 signal stt_result(text: String)
 signal hub_state(services: Dictionary)
+signal config_received(config: Dictionary)
+signal config_updated(updated: Dictionary, config: Dictionary)
 
 var _ws := WebSocketPeer.new()
 var _hub_url := ""
@@ -211,6 +213,16 @@ func _handle_message(raw: String) -> void:
 
 		"state.sync":
 			hub_state.emit(payload.get("services", {}))
+			var sync_config = payload.get("config", {})
+			if sync_config.size() > 0:
+				config_received.emit(sync_config)
+				print("[hub] Config received from hub: ", sync_config)
+
+		"config.sync":
+			var updated = payload.get("updated", {})
+			var full_config = payload.get("config", {})
+			config_updated.emit(updated, full_config)
+			print("[hub] Config pushed from hub: ", updated)
 
 		"pong":
 			pass  # keepalive response

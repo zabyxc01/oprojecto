@@ -450,7 +450,7 @@ func _set_state(new_state: State) -> void:
 	var old_name = _state_name(current_state)
 	current_state = new_state
 	var new_name = _state_name(new_state)
-	print("[desktop_physics] ", old_name, " -> ", new_name)
+	DebugLog.log("desktop_physics", old_name + " -> " + new_name)
 	state_changed.emit(new_name)
 
 

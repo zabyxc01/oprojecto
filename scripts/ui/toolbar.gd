@@ -48,6 +48,8 @@ var _initiation_row: HBoxContainer
 var _initiation_label: Label
 var _focus_row: HBoxContainer
 var _status_label: Label
+var _llm_selector_ref: OptionButton
+var _preset_selector_ref: OptionButton
 
 const MODELS_DIR := "/mnt/storage/staging/ai-models-animations/vrm-models/"
 
@@ -126,6 +128,7 @@ func build(config: Node) -> void:
 	tb_vbox.add_child(row_preset)
 	_add_label(row_preset, "Mode:")
 	var preset_selector = _add_dropdown(row_preset, 160)
+	_preset_selector_ref = preset_selector
 	preset_selector.add_item("Max Quality (~10GB)", 0)
 	preset_selector.add_item("Optimal (~6GB)", 1)
 	preset_selector.add_item("Lite (~3GB)", 2)
@@ -146,8 +149,9 @@ func build(config: Node) -> void:
 	tb_vbox.add_child(row_llm)
 	_add_label(row_llm, "Chat:")
 	var _llm_selector = _add_dropdown(row_llm, 160)
-	_llm_selector.add_item("gemma3:latest", 0)
-	_llm_selector.add_item("qwen2.5:7b", 1)
+	_llm_selector_ref = _llm_selector
+	_llm_selector.add_item("qwen2.5:7b", 0)
+	_llm_selector.add_item("gemma3:latest", 1)
 	_llm_selector.add_item("llama3.1:8b", 2)
 	_llm_selector.add_item("phi-3.5:latest", 3)
 	_llm_selector.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -221,7 +225,7 @@ func build(config: Node) -> void:
 	_engagement_selector.add_item("Chat Only", 0)
 	_engagement_selector.add_item("Aware", 1)
 	_engagement_selector.add_item("Live", 2)
-	_engagement_selector.select(1)  # default: Aware
+	_engagement_selector.select(0)  # default: Chat Only
 	_engagement_selector.mouse_filter = Control.MOUSE_FILTER_STOP
 	_engagement_selector.item_selected.connect(_on_engagement_selected)
 
@@ -410,6 +414,23 @@ func build(config: Node) -> void:
 
 	_add_separator(tb_vbox)
 
+	# ══ LOG FILTER ═════════════════════════════════════════════════
+	_add_section_label(tb_vbox, "LOG FILTER")
+	var log_categories := ["anim", "expr_mgr", "desktop_physics", "pipeline",
+		"behavior", "ambient", "hub", "main", "screen_capture", "screen_listen"]
+	for cat in log_categories:
+		var row = HBoxContainer.new()
+		tb_vbox.add_child(row)
+		_add_label(row, cat + ":")
+		var toggle = CheckButton.new()
+		toggle.button_pressed = DebugLog.enabled_categories.get(cat, true)
+		toggle.mouse_filter = Control.MOUSE_FILTER_STOP
+		var cat_name = cat  # capture for closure
+		toggle.toggled.connect(func(on): DebugLog.set_category(cat_name, on))
+		row.add_child(toggle)
+
+	_add_separator(tb_vbox)
+
 	# ══ STATUS ═════════════════════════════════════════════════════
 	_status_label = Label.new()
 	_status_label.text = ""
@@ -595,3 +616,28 @@ func _add_spacer(parent: Node) -> void:
 	var spacer = Control.new()
 	spacer.custom_minimum_size = Vector2(10, 0)
 	parent.add_child(spacer)
+
+
+func apply_hub_config(cfg: Dictionary) -> void:
+	"""Update toolbar dropdowns to match hub config. Called on connect + push."""
+	# LLM model
+	var model: String = cfg.get("ollama_model", "")
+	if model != "" and _llm_selector_ref:
+		var found := false
+		for i in _llm_selector_ref.item_count:
+			if _llm_selector_ref.get_item_text(i) == model:
+				_llm_selector_ref.select(i)
+				found = true
+				break
+		if not found:
+			_llm_selector_ref.add_item(model, _llm_selector_ref.item_count)
+			_llm_selector_ref.select(_llm_selector_ref.item_count - 1)
+
+	# Resource preset
+	var preset: String = cfg.get("resource_preset", "")
+	if preset != "" and _preset_selector_ref:
+		var preset_map := {"max_quality": 0, "optimal": 1, "lite": 2, "gaming": 3}
+		if preset in preset_map:
+			_preset_selector_ref.select(preset_map[preset])
+
+	print("[toolbar] Applied hub config: model=%s preset=%s" % [model, preset])

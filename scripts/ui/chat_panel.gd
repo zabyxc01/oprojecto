@@ -7,12 +7,15 @@ class_name ChatPanel
 signal text_submitted(text: String)
 signal center_pressed
 signal toggle_pressed
+signal web_search_toggled(enabled: bool)
 
 var chat_messages: VBoxContainer
 var text_input: LineEdit
 var _chat_scroll: ScrollContainer
 var _sys_log: Label
 var _chat_toggle: Button
+var _web_search_btn: Button
+var _web_search_enabled := false
 var _config: Node
 
 
@@ -100,6 +103,30 @@ func build(config: Node) -> void:
 	var input_bar = HBoxContainer.new()
 	input_bar.add_theme_constant_override("separation", 6)
 	vbox.add_child(input_bar)
+
+	# Web search toggle button
+	_web_search_btn = Button.new()
+	_web_search_btn.text = "W"
+	_web_search_btn.tooltip_text = "Web search (off)"
+	_web_search_btn.add_theme_font_size_override("font_size", 13)
+	var ws_style = StyleBoxFlat.new()
+	ws_style.bg_color = Color(0.15, 0.15, 0.2, 0.6)
+	ws_style.corner_radius_top_left = 18
+	ws_style.corner_radius_top_right = 18
+	ws_style.corner_radius_bottom_left = 18
+	ws_style.corner_radius_bottom_right = 18
+	ws_style.content_margin_left = 8
+	ws_style.content_margin_right = 8
+	_web_search_btn.add_theme_stylebox_override("normal", ws_style)
+	var ws_hover = ws_style.duplicate()
+	ws_hover.bg_color = Color(0.25, 0.25, 0.5, 0.7)
+	_web_search_btn.add_theme_stylebox_override("hover", ws_hover)
+	_web_search_btn.add_theme_stylebox_override("pressed", ws_hover)
+	_web_search_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	_web_search_btn.add_theme_color_override("font_color", Color(0.5, 0.5, 0.6))
+	_web_search_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	_web_search_btn.pressed.connect(_toggle_web_search)
+	input_bar.add_child(_web_search_btn)
 
 	text_input = LineEdit.new()
 	text_input.placeholder_text = "Talk to Kira..."
@@ -231,6 +258,78 @@ func add_message(sender: String, text: String) -> void:
 func set_width(w: float) -> void:
 	custom_minimum_size.x = w
 	offset_left = -w
+
+
+func _toggle_web_search() -> void:
+	_web_search_enabled = !_web_search_enabled
+	if _web_search_enabled:
+		_web_search_btn.add_theme_color_override("font_color", Color(0.3, 0.8, 1.0))
+		_web_search_btn.tooltip_text = "Web search (on)"
+		var on_style = StyleBoxFlat.new()
+		on_style.bg_color = Color(0.1, 0.25, 0.35, 0.8)
+		on_style.corner_radius_top_left = 18
+		on_style.corner_radius_top_right = 18
+		on_style.corner_radius_bottom_left = 18
+		on_style.corner_radius_bottom_right = 18
+		on_style.content_margin_left = 8
+		on_style.content_margin_right = 8
+		_web_search_btn.add_theme_stylebox_override("normal", on_style)
+	else:
+		_web_search_btn.add_theme_color_override("font_color", Color(0.5, 0.5, 0.6))
+		_web_search_btn.tooltip_text = "Web search (off)"
+		var off_style = StyleBoxFlat.new()
+		off_style.bg_color = Color(0.15, 0.15, 0.2, 0.6)
+		off_style.corner_radius_top_left = 18
+		off_style.corner_radius_top_right = 18
+		off_style.corner_radius_bottom_left = 18
+		off_style.corner_radius_bottom_right = 18
+		off_style.content_margin_left = 8
+		off_style.content_margin_right = 8
+		_web_search_btn.add_theme_stylebox_override("normal", off_style)
+	web_search_toggled.emit(_web_search_enabled)
+
+
+func set_web_search_enabled(on: bool) -> void:
+	"""Set web search state without emitting signal (for hub sync)."""
+	_web_search_enabled = on
+	if not _web_search_btn:
+		return
+	if on:
+		_web_search_btn.add_theme_color_override("font_color", Color(0.3, 0.8, 1.0))
+		_web_search_btn.tooltip_text = "Web search (on)"
+		var on_style = StyleBoxFlat.new()
+		on_style.bg_color = Color(0.1, 0.25, 0.35, 0.8)
+		on_style.corner_radius_top_left = 18
+		on_style.corner_radius_top_right = 18
+		on_style.corner_radius_bottom_left = 18
+		on_style.corner_radius_bottom_right = 18
+		on_style.content_margin_left = 8
+		on_style.content_margin_right = 8
+		_web_search_btn.add_theme_stylebox_override("normal", on_style)
+	else:
+		_web_search_btn.add_theme_color_override("font_color", Color(0.5, 0.5, 0.6))
+		_web_search_btn.tooltip_text = "Web search (off)"
+		var off_style = StyleBoxFlat.new()
+		off_style.bg_color = Color(0.15, 0.15, 0.2, 0.6)
+		off_style.corner_radius_top_left = 18
+		off_style.corner_radius_top_right = 18
+		off_style.corner_radius_bottom_left = 18
+		off_style.corner_radius_bottom_right = 18
+		off_style.content_margin_left = 8
+		off_style.content_margin_right = 8
+		_web_search_btn.add_theme_stylebox_override("normal", off_style)
+
+
+func set_web_search_active(active: bool) -> void:
+	"""Show visual feedback when a web search is in progress."""
+	if not _sys_log:
+		return
+	if active:
+		_sys_log.text = "Searching web..."
+		_sys_log.add_theme_color_override("font_color", Color(0.3, 0.8, 1.0, 0.9))
+	else:
+		_sys_log.text = ""
+		_sys_log.add_theme_color_override("font_color", Color(0.6, 0.6, 0.7, 0.9))
 
 
 func update_font_size(size: int) -> void:

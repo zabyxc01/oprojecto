@@ -15,6 +15,10 @@ config/description="AI-driven 3D character renderer and desktop companion"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.6")
 
+[autoload]
+
+DebugLog="*res://scripts/debug_log.gd"
+
 [display]
 
 window/size/viewport_width=3440

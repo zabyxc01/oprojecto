@@ -131,7 +131,7 @@ func request_animation(anim_name: String, priority: int, duration: float = 4.0) 
 		_play_anim(anim_name)
 		_current_priority = priority
 		_anim_remaining = duration if priority > AnimPriority.POSITIONAL else 0.0
-		print("[expr_mgr] Playing: %s (pri %d, %.1fs)" % [anim_name, priority, duration])
+		DebugLog.log("expr_mgr", "Playing: %s (pri %d, %.1fs)" % [anim_name, priority, duration])
 		return true
 	else:
 		# Queue it — lower priority, play when current finishes
@@ -152,7 +152,7 @@ func set_positional(physics_state: String) -> void:
 	if _current_priority <= AnimPriority.POSITIONAL:
 		_play_anim(anim_name)
 		_current_priority = AnimPriority.POSITIONAL
-		print("[expr_mgr] Positional: %s" % anim_name)
+		DebugLog.log("expr_mgr", "Positional: %s" % anim_name)
 
 
 func set_speaking(speaking: bool) -> void:
@@ -200,12 +200,12 @@ func _advance_queue() -> void:
 		_play_anim(next["name"])
 		_current_priority = next["priority"]
 		_anim_remaining = next["duration"]
-		print("[expr_mgr] Queue -> %s (pri %d)" % [next["name"], next["priority"]])
+		DebugLog.log("expr_mgr", "Queue -> %s (pri %d)" % [next["name"], next["priority"]])
 	else:
 		# Return to positional base
 		_play_anim(_positional_anim)
 		_current_priority = AnimPriority.POSITIONAL
-		print("[expr_mgr] Returning to positional: %s" % _positional_anim)
+		DebugLog.log("expr_mgr", "Returning to positional: %s" % _positional_anim)
 
 
 func _play_anim(anim_name: String) -> void:

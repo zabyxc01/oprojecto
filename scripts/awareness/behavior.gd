@@ -18,7 +18,8 @@ signal wants_animation(anim_name: String)
 
 enum State { ATTENTIVE, OBSERVING, IDLE, SLEEPING, REACTING, INITIATING }
 
-var current_state: State = State.OBSERVING
+var current_state: State = State.IDLE
+var _enabled := false  # disabled until engagement mode activates it
 var _state_timer := 0.0  # time in current state
 var _last_interaction := 0.0  # time since last user interaction (seconds)
 var _interaction_timer := 0.0
@@ -40,7 +41,15 @@ var _idle_anim_timer := 0.0
 var _idle_anim_interval := 10.0
 
 
+func set_enabled(on: bool) -> void:
+	_enabled = on
+	if not on:
+		if current_state != State.IDLE:
+			_transition(State.IDLE)
+
 func update(delta: float) -> void:
+	if not _enabled:
+		return
 	_state_timer += delta
 	_interaction_timer += delta
 	_last_interaction += delta
@@ -75,6 +84,8 @@ func on_user_interaction() -> void:
 
 func on_context_changed(context: Dictionary) -> void:
 	"""Call when screen context changes."""
+	if not _enabled:
+		return
 	var old_activity = _context.get("activity", "")
 	_context = context
 
@@ -222,5 +233,5 @@ func _transition(new_state: State) -> void:
 	current_state = new_state
 	_state_timer = 0.0
 	var new_name = get_state_name()
-	print("[behavior] ", old_name, " -> ", new_name)
+	DebugLog.log("behavior", old_name + " -> " + new_name)
 	state_changed.emit(new_name, old_name)

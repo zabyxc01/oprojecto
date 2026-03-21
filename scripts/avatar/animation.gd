@@ -240,7 +240,7 @@ func play(anim_name: String) -> void:
 	var anims = clip["player"].get_animation_list()
 	if anims.size() > 0:
 		clip["player"].play(anims[0])
-	print("[anim] Playing: ", anim_name)
+	DebugLog.log("anim", "Playing: " + anim_name)
 
 func stop() -> void:
 	if _current_clip in _clips:
