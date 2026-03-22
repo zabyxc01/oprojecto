@@ -198,6 +198,7 @@ func _ready() -> void:
 	hub_client.stt_result.connect(_on_stt_result)
 	hub_client.config_received.connect(_on_hub_config)
 	hub_client.config_updated.connect(_on_hub_config_updated)
+	hub_client.service_error.connect(_on_service_error)
 	connection_manager.mode_changed.connect(_on_connection_mode_changed)
 	connection_manager.setup(hub_client)
 
@@ -636,6 +637,11 @@ func _on_hub_config(cfg: Dictionary) -> void:
 	if chat_panel:
 		chat_panel.set_web_search_enabled(cfg.get("rag_auto_web_search", false))
 	print("[main] Hub config synced on connect")
+
+func _on_service_error(service: String, event: String, message: String) -> void:
+	"""Hub reports a service crash or kill — show to user."""
+	print("[main] Service error: %s — %s (%s)" % [service, message, event])
+	add_chat_message("System", message)
 
 func _on_hub_config_updated(updated: Dictionary, cfg: Dictionary) -> void:
 	"""Hub pushed a config change — sync F3 toolbar."""

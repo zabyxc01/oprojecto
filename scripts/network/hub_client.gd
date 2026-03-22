@@ -4,7 +4,7 @@ class_name HubClient
 # WebSocket client for oAIo companion extension protocol.
 # Connects to ws://<hub>/extensions/companion/ws
 # Sends: chat.request, stt.audio, state.sync, ping
-# Receives: chat.response, tts.audio, stt.transcript, state.sync, pong
+# Receives: chat.response, tts.audio, stt.transcript, state.sync, service.error, pong
 
 signal connected
 signal disconnected
@@ -14,6 +14,7 @@ signal stt_result(text: String)
 signal hub_state(services: Dictionary)
 signal config_received(config: Dictionary)
 signal config_updated(updated: Dictionary, config: Dictionary)
+signal service_error(service: String, event: String, message: String)
 
 var _ws := WebSocketPeer.new()
 var _hub_url := ""
@@ -223,6 +224,13 @@ func _handle_message(raw: String) -> void:
 			var full_config = payload.get("config", {})
 			config_updated.emit(updated, full_config)
 			print("[hub] Config pushed from hub: ", updated)
+
+		"service.error":
+			var svc: String = payload.get("service", "unknown")
+			var evt: String = payload.get("event", "error")
+			var msg_text: String = payload.get("message", "Service error")
+			print("[hub] Service error: %s — %s" % [svc, msg_text])
+			service_error.emit(svc, evt, msg_text)
 
 		"pong":
 			pass  # keepalive response
