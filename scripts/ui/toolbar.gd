@@ -178,8 +178,6 @@ func build(config: Node) -> void:
 	tts_selector = _add_dropdown(row_tts, 140)
 	tts_selector.add_item("kokoro", 0)
 	tts_selector.add_item("indextts", 1)
-	tts_selector.add_item("oaudio", 2)
-	tts_selector.add_item("f5", 3)
 	tts_selector.item_selected.connect(func(idx): tts_selected.emit(idx))
 
 	# Voice output toggle

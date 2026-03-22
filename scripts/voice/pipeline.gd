@@ -19,7 +19,7 @@ var _audio_queue: Array[Dictionary] = []  # [{data, format}]
 
 # Config (used in direct mode only — hub has its own config)
 var ollama_url := "http://127.0.0.1:11434"
-var ollama_model := "gemma3:latest"
+var ollama_model := "qwen2.5:7b"
 var tts_url := "http://127.0.0.1:8000"
 var tts_voice := "af_heart"
 var stt_url := "http://127.0.0.1:8003"
