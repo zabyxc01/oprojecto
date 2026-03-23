@@ -16,6 +16,7 @@ var current_state: PipelineState = PipelineState.IDLE
 # Connection mode — set by ConnectionManager
 var hub_connected := false
 var _audio_queue: Array[Dictionary] = []  # [{data, format}]
+const MAX_AUDIO_QUEUE := 20  # Prevent unbounded growth if chunks arrive faster than playback
 
 # Config (used in direct mode only — hub has its own config)
 var ollama_url := "http://127.0.0.1:11434"
@@ -111,7 +112,8 @@ func on_hub_chat_response(text: String, done: bool, emotion: Variant, objective:
 			if primary != "neutral":
 				on_emotion.emit(emotion)
 		elif emotion is String and emotion != "neutral" and emotion != "":
-			on_emotion.emit({"primary": emotion, "primary_intensity": 0.7, "secondary": "", "secondary_intensity": 0.0})
+			# Preserve server-intended emotion; use moderate default intensity (hub sends dict when intensity matters)
+			on_emotion.emit({"primary": emotion, "primary_intensity": 0.5, "secondary": "", "secondary_intensity": 0.0})
 		# Waiting for TTS audio to arrive
 		_set_state(PipelineState.GENERATING_AUDIO)
 		_tts_timeout_timer = get_tree().create_timer(30.0)
@@ -121,9 +123,12 @@ func on_hub_tts_audio(data: PackedByteArray, format: String) -> void:
 	# Cancel timeout — audio arrived
 	_tts_timeout_timer = null
 	if current_state == PipelineState.SPEAKING:
-		# Already playing — queue this chunk
-		_audio_queue.append({"data": data, "format": format})
-		print("[pipeline] Queued audio chunk (", _audio_queue.size(), " in queue)")
+		# Already playing — queue this chunk (bounded)
+		if _audio_queue.size() < MAX_AUDIO_QUEUE:
+			_audio_queue.append({"data": data, "format": format})
+			print("[pipeline] Queued audio chunk (", _audio_queue.size(), " in queue)")
+		else:
+			print("[pipeline] Audio queue full (", MAX_AUDIO_QUEUE, "), dropping chunk")
 	else:
 		# Play immediately
 		if format == "mp3":
@@ -134,6 +139,9 @@ func on_hub_tts_audio(data: PackedByteArray, format: String) -> void:
 func _on_tts_timeout() -> void:
 	if current_state == PipelineState.PROCESSING or current_state == PipelineState.GENERATING_AUDIO:
 		print("[pipeline] TTS timeout — returning to idle")
+		# Reset emotion to neutral so avatar doesn't stay stuck in pose
+		on_emotion.emit({"primary": "neutral", "primary_intensity": 0.0, "secondary": "", "secondary_intensity": 0.0})
+		_audio_queue.clear()
 		_set_state(PipelineState.IDLE)
 
 # ── Audio Playback (shared) ──────────────────────────────────────────────────

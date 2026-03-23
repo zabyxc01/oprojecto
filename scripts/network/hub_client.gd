@@ -3,8 +3,8 @@ class_name HubClient
 
 # WebSocket client for oAIo companion extension protocol.
 # Connects to ws://<hub>/extensions/companion/ws
-# Sends: chat.request, stt.audio, state.sync, ping
-# Receives: chat.response, tts.audio, stt.transcript, state.sync, service.error, pong
+# Sends: auth, chat.request, stt.audio, vision.analyze, chat.multi, state.sync, ping
+# Receives: chat.response, tts.audio, stt.transcript, state.sync, config.sync, service.error, error, pong
 
 signal connected
 signal disconnected
@@ -15,9 +15,12 @@ signal hub_state(services: Dictionary)
 signal config_received(config: Dictionary)
 signal config_updated(updated: Dictionary, config: Dictionary)
 signal service_error(service: String, event: String, message: String)
+signal hub_error(message: String)
 
 var _ws := WebSocketPeer.new()
 var _hub_url := ""
+var _auth_token := ""
+var _auth_sent := false
 var _is_connected := false
 var _ping_timer := 0.0
 const PING_INTERVAL := 15.0
@@ -25,8 +28,10 @@ const PING_INTERVAL := 15.0
 func is_connected_to_hub() -> bool:
 	return _is_connected
 
-func connect_to_hub(url: String) -> void:
+func connect_to_hub(url: String, auth_token: String = "") -> void:
 	_hub_url = url
+	_auth_token = auth_token
+	_auth_sent = false
 	var ws_url = url.replace("http://", "ws://").replace("https://", "wss://")
 	if not ws_url.ends_with("/"):
 		ws_url += "/"
@@ -98,6 +103,21 @@ func send_vision(image_b64: String, context: String, prompt: String, model: Stri
 		},
 	})
 
+func send_multi(text: String, agents: Array, pattern: String = "debate", history: Array = []) -> void:
+	if not _is_connected:
+		return
+	_send({
+		"type": "chat.multi",
+		"id": _uuid(),
+		"ts": Time.get_unix_time_from_system(),
+		"payload": {
+			"text": text,
+			"agents": agents,
+			"pattern": pattern,
+			"history": history,
+		},
+	})
+
 func _send_state_sync() -> void:
 	_send({
 		"type": "state.sync",
@@ -127,6 +147,11 @@ func _process(delta: float) -> void:
 			if not _is_connected:
 				_is_connected = true
 				print("[hub] connected")
+				# Auth must be first message if token is set
+				if _auth_token != "" and not _auth_sent:
+					_send({"type": "auth", "token": _auth_token})
+					_auth_sent = true
+					print("[hub] auth sent")
 				_send_state_sync()
 				connected.emit()
 
@@ -171,7 +196,7 @@ func _handle_message(raw: String) -> void:
 			if emotion_raw is Dictionary:
 				emotion_data = emotion_raw
 			else:
-				emotion_data = {"primary": str(emotion_raw), "primary_intensity": 0.7, "secondary": "", "secondary_intensity": 0.0}
+				emotion_data = {"primary": str(emotion_raw), "primary_intensity": 0.5, "secondary": "", "secondary_intensity": 0.0}
 			var is_objective: bool = payload.get("objective", false)
 			# Print debug info if present
 			var dbg = payload.get("debug", {})
@@ -231,6 +256,11 @@ func _handle_message(raw: String) -> void:
 			var msg_text: String = payload.get("message", "Service error")
 			print("[hub] Service error: %s — %s" % [svc, msg_text])
 			service_error.emit(svc, evt, msg_text)
+
+		"error":
+			var err_msg: String = payload.get("message", "Unknown error")
+			print("[hub] Error: ", err_msg)
+			hub_error.emit(err_msg)
 
 		"pong":
 			pass  # keepalive response
